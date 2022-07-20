@@ -17,14 +17,14 @@ import Control.Monad.Trans.State
 import Text.Printf
 
 
-stepAndTrace :: (([Walker], StdGen), PopulationState) -> IO (([Walker], StdGen), PopulationState)
-stepAndTrace ((ws, r), ps) = putStrLn (showPopulationState ws ps) >> pure (runState (runRandT (step ws) r) ps)
+stepAndTrace :: (StdGen, PopulationState) -> IO (StdGen, PopulationState)
+stepAndTrace (r, ps) = putStrLn (showPopulationState ps) >> pure (runState (execRandT step r) ps)
 
-initSystem :: Double -> Int -> Configuration -> IO (([Walker], StdGen), PopulationState)
-initSystem dt n c = (,initialPopState dt n) <$> (replicate n (Walker c 1),) <$> getStdGen
+initSystem :: Double -> Int -> Configuration -> IO (StdGen, PopulationState)
+initSystem dt n c = (,initialPopState c dt n) <$> getStdGen
 
-showPopulationState :: [Walker] -> PopulationState -> String
-showPopulationState ws ps = printf "pop=%d, E=%+.5f +- %.1e" (length ws) (energySum ps / fromIntegral (iterations ps)) (sqrt (variance ps) / fromIntegral (iterations ps))
+showPopulationState :: PopulationState -> String
+showPopulationState ps = printf "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" (population ps) (totalAmplitude ps) (energySum ps / fromIntegral (iterations ps)) (energyUncertainty ps)
 
-resetIteration :: (([Walker], StdGen), PopulationState) -> (([Walker], StdGen), PopulationState)
-resetIteration ((ws, r), ps) = ((ws,r), initialPopState (deltaTime ps) (floor $ setPoint ps))
+resetIteration :: (StdGen, PopulationState) -> (StdGen, PopulationState)
+resetIteration (r, ps) = (r,ps{variance=0,energySum=0,iterations=0})

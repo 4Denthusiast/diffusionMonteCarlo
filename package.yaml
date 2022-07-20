@@ -20,7 +20,7 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/4Denthusiast/diffusionMonteCarlo#readme>
 
 dependencies:
-- base >= 4.7 && < 5
+- base >= 3.0.3.2 && < 5
 - random
 
 library:
@@ -29,6 +29,7 @@ library:
   - random
   - MonadRandom
   - transformers
+  - containers
 
 executables:
   diffusionMonteCarlo-exe:
