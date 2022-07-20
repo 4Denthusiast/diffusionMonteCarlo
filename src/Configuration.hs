@@ -6,8 +6,7 @@ module Configuration (
     suitableStepSize,
     dist,
     dist2,
-    hydrogen,
-    hydride,
+    createAtom
 ) where
 
 import Particle
@@ -50,8 +49,5 @@ dist r0 r1 = sqrt $ dist2 r0 r1
 pad :: Int -> Position -> Position
 pad d r = take d $ r ++ repeat 0
 
-hydrogen :: Int -> Configuration
-hydrogen d = Conf [(pad d [0], Nucleus 1), (pad d [1], Electron)]
-
-hydride :: Int -> Configuration
-hydride d = Conf [(pad d [0], Nucleus 1), (pad d [1], Electron), (pad d [-1], Electron)]
+createAtom :: Int -> Int -> Int -> Configuration
+createAtom d z q = Conf $ (pad d [0], Nucleus z) : map (\n -> (pad d [fromIntegral n], Electron)) [1..(z-q)]

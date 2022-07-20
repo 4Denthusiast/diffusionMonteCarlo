@@ -3,8 +3,7 @@
 module Lib (
     stepAndTrace,
     initialPopState,
-    hydrogen,
-    hydride,
+    createAtom,
     initSystem,
     resetIteration,
 ) where
