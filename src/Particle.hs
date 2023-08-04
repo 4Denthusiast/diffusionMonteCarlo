@@ -13,3 +13,7 @@ particleMass (Nucleus _) = 1/0
 particleCharge :: Particle -> Double
 particleCharge Electron = -1
 particleCharge (Nucleus n) = fromIntegral n
+
+instance Show Particle where
+    show Electron = "e"
+    show (Nucleus z) = "Z"++show z

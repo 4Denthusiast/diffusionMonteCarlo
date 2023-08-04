@@ -1,0 +1,92 @@
+exp(t(A+B))
+= 1 + tA + tB + ttAA/2 + ttAB/2 + ttBA/2 + ttBB/2 + (t^3/6)(AAA + AAB + ABA + ABB + BAA + BAB + BBA + BBB) + O(t^4)
+
+exp(tA/2)exp(tB)exp(tA/2)
+=(1 + tA/2 + ttAA/8 + tttAAA/48 + O(t^4))(1 + tB + ttBB/2 + tttBBB/6 + O(t^4))(1 + tA/2 + ttAA/8 + tttAAA/48 + O(t^4))
+=1 + tA + tB + ttAA/2 + ttAB/2 + ttBA/2 + ttBB/2 + t^3(AAA/6 + AAB/8 + ABA/4 + ABB/4 + BAA/8 + 0BAB + BBA/4 + BBB/6) + O(t^4)
+
+exp(t(A+B)) - exp(tA/2)exp(tB)exp(tA/2)
+= t^3(AAB/4 - ABA/2 - ABB/2 + BAA/4 + BAB - BBA/2)/6 + O(t^4)
+= t^3/6 (A[A,B]/4 + [B,A]A/4 + [B,A]B/2 + B[A,B]/2) + O(t^4)
+= t^3/24 [A+2B,[A,B]] + O(t^4)
+
+A = -V
+B = -∇^2
+
+(exp(t(A+B)) - exp(tA/2)exp(tB)exp(tA/2))Ψ
+= t^3/24 [V+2∇^2,[∇^2,V]] Ψ + O(t^4)
+~= t^3/24 [V+2∇^2, (∇^2V) + 2(∇V)∇] Ψ
+= t^3/24 (2V∇V∇Ψ - 2∇V∇(VΨ) + 2(∇^4V)Ψ + 4 ∇^3V ∇Ψ + 2∇^2(∇V ∇Ψ) - 2 ∇V ∇^3Ψ)
+= t^3/24 (2V∇V∇Ψ - 2∇V∇ΨV - 2(∇V)^2 Ψ + 2 ∇^4V Ψ + 4 ∇^3V ∇Ψ + 2∇^3V ∇Ψ + 4 ∇^2V ∇^2 Ψ)
+= t^3/24 (-2(∇V)^2 Ψ + 2 ∇^4V Ψ + 6 ∇^3V ∇Ψ + 4 ∇^2V ∇^2Ψ)
+
+If ∇^2V = 0, this reduces to
+-t^3/12 ∇V^2 Ψ
+with a factor of 1/2m when the units are added back in
+
+The only case where ∇^2V is not 0 is the slimming force,
+∇^2V
+= ∇^2 r^-2 exp(-r)
+= 2 ∇(r^-2) ∇exp(-r) + r^-2 ∇^2exp(-r)
+= 2 r/r^-4 . (-r/|r|) exp(-r) + r^-2 ∇(-(r/|r|) exp(-r))
+= -2 |r|^-3 exp(-r) - r^-2 (-exp(-r) + 3 exp(-r))
+= -r^-2 exp(-r) (2/|r| + 2)
+
+which gives errors of the order |r|^-5 Ψ + |r|^-4 ∇Ψ + |r|^-3 ∇^2Ψ all of which are smaller (for small r, which is the only case where the slim force is non-negligible) than r^-6, the scale of the ∇V^2 component in the 4D case
+
+For the error to be less than E, it is therefore necessary that t^3/12 << E/|∇V|^2, so roughly, in 2D, t << E^1/3 r^2/3, in 3D, t << E^1/3 r^4/3, and in 4D, t << E^1/3 r^2. Possibly some additional restriction is needed in the 2D and 3D cases for small r, so that it can't jump all the way to the singularity.
+
+In 3D, for small enough r, the chance of jumping all the way from r for to r' (for small r) is about r'^3/r^2 (in 2D it's r'^2/r^2/3), giving a V factor of about exp(r^4/3 / r'). The total expectation is then about int_0^r exp(r^4/3 / r') (r'/r)^2 dr' which is obviously infinite, which is why my 3D simulations keep stopping. In 2D, it's int_0^r exp(-r^2/3 ln(r')) r'/r^2/3 dr' = int_0^r r'^(1-r^2/3) r^-2/3 dr' = [r'^(2-r^2/3) / (r^2/3 - r^3/4)]_0^r, which is actually fine for small r (it isn't fine for large r, but in that case the error becomes exponentially less likely as the allowed time step reduces).
+
+#### Variance:
+Each time a walker goes below a value a of 1, it contributes a variance of a(1-a).
+
+If the ground state wavefunction is Ψ, and the ansatz is A, the variance introduced per unit time in the P component of the current state due to the random motion is
+
+1/m sum_particles particle_value * grad(Ψ/A)^2
+
+If the distribution of particles is approximated as PΨA, this becomes
+
+P/m int(ΨA * ∇(Ψ/A)^2)
+= P/2m int (ΨA * ∇(Ψ/A)^2 - Ψ/A * ∇(ΨA * ∇(Ψ/A)))
+= P/2m int (ΨA (∇Ψ/A - Ψ ∇A/AA)^2 - Ψ/A * ∇(ΨA (∇Ψ/A - Ψ∇A/AA)))
+= P/2m int (Ψ∇Ψ^2/A - 2 Ψ^2∇Ψ∇A/AA + Ψ^3 ∇A^2/A^3 - Ψ/A ∇(Ψ∇Ψ - Ψ^2 ∇A/A))
+= P/2m int (Ψ∇Ψ^2/A - 2 Ψ^2∇Ψ∇A/AA + Ψ^3 ∇A^2/A^3 - Ψ/A (Ψ∇^2Ψ + ∇Ψ^2 - 2Ψ∇Ψ ∇A/A - Ψ^2 ∇^2A/A + Ψ^2 ∇A^2/A^2))
+= P/2m int (Ψ∇Ψ^2/A - 2 Ψ^2∇Ψ∇A/AA + Ψ^3 ∇A^2/A^3 - Ψ^2∇^2Ψ/A - ∇Ψ^2Ψ/A + 2Ψ^2∇Ψ ∇A/A^2 + Ψ^3 ∇^2A/A^2 - Ψ^3 ∇A^2/A^3)
+= P/2m int (- Ψ^2∇^2Ψ/A + Ψ^3 ∇^2A/A^2)
+= P int Ψ/A Ψ^2 (E-V-E_a)
+I can't see any easy way to calculate this in the simulation, since I'd need an estimate of the average value of Ψ^2 or something.
+
+For the moment, let's set A=1, then this is
+-P/m int (Ψ (∇Ψ^2 + Ψ ∇^2 Ψ))
+= -P/2m int (Ψ^2 ∇^2 Ψ)
+= P int (Ψ^3 (E-V))
+
+
+The covariance of the component of two states X and Y (with energies Ex and Ey) per unit time due to the diffusion step is approximately
+P/m int(ΨA * ∇(X/A) * ∇(Y/A))
+
+If A=1, this is
+-P/m int(X ∇(Ψ∇Y))
+= -P/m int(X (∇Ψ∇Y + Ψ∇^2Y))
+= -P/m int(X∇Ψ∇Y + XΨ∇^2Y)
+Clearly the general identity int(A∇B∇C + B∇A∇C + AB∇^2C) = 0 will be useful.
+int(Ψ∇X∇Y)
+= -1/2 int(X∇Ψ∇Y + Y∇Ψ∇X + ΨX∇^2Y + ΨY∇^2X)
+= m int(ΨXY(Ey-V + Ex-V - (E0-V)))
+= m int(ΨXY(Ey+Ex-E0-V))
+
+The variance per unit time of the fourier component at angular frequency w of the population (still neglecting A) is
+sum_states X,Y (Ex-E)(Ey-E)/sqrt(2pi ((Ex+Ey-2E)^2 + w^2)) P int(ΨXY(Ey+Ex-E0-V)) (int X int Y)
+Since there are several factors making the terms where Ex and Ey are similar larger, I'll approximate this by restricting it to X=Y. This changes the constant factor, but the frequency distribution should be similar. With this approximation, and dropping more constant factors as well, it becomes
+sum_states X. (Ex-E)^2/sqrt(4(Ex-E)^2+w^2) P int(ΨX^2(2Ex-E-V)) (int X)^2
+= sum_states X. (Ex-E)/sqrt(4+(w/(Ex-E))^2) P int(ΨX^2(2Ex-E-V)) (int X)^2
+Then approximate the values of the integrals with int X ~= (Ex-E)^f int Ψ (where f is some value probably depending on the dimension that I hope isn't important, also -1/2*d*1/2) and define dE = (Ex-E)
+~= sum_states X. dE/sqrt(1+(w/2dE)^2) P (dE + <|E-V|>) int Ψ dE^-d/2
+As I only care about the frequency dependency, let's get rid of the irrelevant terms.
+\propto sum_states X. dE/sqrt(1+(w/2dE)^2) (dE + <|E-V|>) dE^-d/2
+~= int_x densityofstates(x) x^(1-d/2) (x+<|E-V|>) sqrt(1+(w/2x)^2)
+That looks pretty divergent. I think that means the first excited state dominates, unfortunately. If only the first excited state contributes and the band gap is b, this is proportional to 1/sqrt(1+(w/2b)^2).
+Perhaps it could be useful that sum X. (int X)^2 = the system's volume (of the whole space for all states, or roughly the area near the ground state for the relevant ones).
+
+In summary, theoretically calculating the variance is hopeless.

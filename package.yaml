@@ -30,6 +30,8 @@ library:
   - MonadRandom
   - transformers
   - containers
+  - array
+  - mathlist
 
 executables:
   diffusionMonteCarlo-exe:

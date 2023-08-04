@@ -10,20 +10,23 @@ module Lib (
 
 import Configuration
 import Walk
+import qualified PriorityQueue as PQ
+import Variance
 
 import Control.Monad.Random
 import Control.Monad.Trans.State
 import Text.Printf
 
 
-stepAndTrace :: (StdGen, PopulationState) -> IO (StdGen, PopulationState)
-stepAndTrace (r, ps) = putStrLn (showPopulationState ps) >> pure (runState (execRandT step r) ps)
+stepAndTrace :: (StdGen, PopulationState) -> IO (Double, (StdGen, PopulationState))
+stepAndTrace (r, ps) = putStrLn (showPopulationState ps) >> pure ((\((x,y),z) -> (x,(y,z))) $ runState (runRandT step r) ps)
 
-initSystem :: Double -> Int -> Configuration -> IO (StdGen, PopulationState)
-initSystem dt n c = (,initialPopState c dt n) <$> getStdGen
+initSystem :: Double -> Int -> Double -> Configuration -> IO (StdGen, PopulationState)
+initSystem dt n e c = (,initialPopState c dt n e) <$> getStdGen
 
 showPopulationState :: PopulationState -> String
-showPopulationState ps = printf "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" (population ps) (totalAmplitude ps) (energySum ps / fromIntegral (iterations ps)) (energyUncertainty ps)
+showPopulationState ps = printf "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" (population ps) (totalAmplitude ps) energy error
+    where (energy, error) = getMeanAndStddev $ variance ps
 
 resetIteration :: (StdGen, PopulationState) -> (StdGen, PopulationState)
-resetIteration (r, ps) = (r,ps{variance=0,energySum=0,iterations=0})
+resetIteration (r, ps) = (r,ps{variance=[],dataSeries=[]})

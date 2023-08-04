@@ -2,6 +2,7 @@ module Configuration (
     Position,
     Configuration(..),
     Walker(..),
+    confDimension,
     potentialEnergy,
     suitableStepSize,
     dist,
@@ -17,9 +18,9 @@ import Debug.Trace
 
 type Position = [Double]
 
-data Configuration = Conf [(Position, Particle)]
+data Configuration = Conf [(Position, Particle)] deriving Show
 
-data Walker = Walker {configuration :: Configuration, amplitude :: Double, localTime :: Double}
+data Walker = Walker {configuration :: Configuration, amplitude :: Double, localTime :: Double} deriving Show
 
 confDimension :: Configuration -> Int
 confDimension (Conf ps) = length $ fst $ head ps
@@ -36,8 +37,11 @@ potentialEnergy c@(Conf ps) = sum $ concat $ zipWith (\p t -> map (pairEnergy p)
 
 -- Decrease the step-size when the potential energy is locally highly variable (i.e. when particles are nearby), and adapt to the desired energy error.
 suitableStepSize :: Double -> Configuration -> Double
-suitableStepSize de c@(Conf ps) = sqrt $ recip $ sum $ concat $ zipWith (\p t -> map (f p) t) ps (tail $ tails ps)
-    where f (r0,p0) (r1,p1) = dist2 r0 r1 ^^ (1-confDimension c) / (de * min (particleMass p0) (particleMass p1))
+suitableStepSize de c@(Conf ps) = min ordinaryBound radiusBound
+    where ordinaryBound = (de/(sum $ concat $ zipWith (\p t -> map (dv2 p) t) ps (tail $ tails ps)))**(1/3) -- t^3 < E/|V|^2
+          dv2 (r0,p0) (r1,p1) = dist2 r0 r1 ^^ (1-confDimension c)
+          radiusBound = (0.1*) $ minimum $ concat $ zipWith (\p t -> map (rb p) t) ps (tail $ tails ps) -- the distance that may be travelled is less than the distance between any two particles
+          rb (r0,p0) (r1,p1) = dist2 r0 r1
 
 dist2 :: Position -> Position -> Double
 dist2 r0 r1 = sum $ map (^2) $ zipWith (-) r0 r1

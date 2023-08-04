@@ -1,29 +1,32 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TupleSections #-}
 
 module Walk (
     PopulationState(..),
     population,
     totalAmplitude,
-    energyUncertainty,
     initialPopState,
     step
 ) where
 
 import Particle
 import Configuration
+import Ansatz
 import qualified PriorityQueue as PQ
+import Variance
 
+import qualified Data.Array as A
+import Data.Complex
+import Data.List
 import Data.Maybe
 import Debug.Trace
 import Control.Monad.Random
 import Control.Monad.Trans.State
+import Math.List.FFT
 
 type WalkerSet = PQ.PriorityQueue Double Walker
 
-data PopulationState = PopState {walkerSet :: WalkerSet, energy :: Double, popVariance :: Double, variance :: Double, deltaTime :: Double, setPoint :: Double, energySum :: Double, iterations :: Int}
-
-energyUncertainty :: PopulationState -> Double
-energyUncertainty ps = if variance ps == 0 then 1 else sqrt (variance ps) / fromIntegral (iterations ps)
+data PopulationState = forall a. Ansatz a => PopState {walkerSet :: WalkerSet, energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, ansatz :: a, requiredError :: Double, dataSeries :: [Double]}
 
 population :: PopulationState -> Int
 population = PQ.size . walkerSet
@@ -31,19 +34,16 @@ population = PQ.size . walkerSet
 totalAmplitude :: PopulationState -> Double
 totalAmplitude = sum . map (amplitude . snd) . PQ.toAscList . walkerSet
 
-initialPopState :: Configuration -> Double -> Int -> PopulationState
-initialPopState c dt n = PopState (PQ.fromList (replicate n (0,Walker c 1 0))) 0 0 0 dt (fromIntegral n) 0 0
+initialPopState :: Configuration -> Double -> Int -> Double -> PopulationState
+initialPopState c dt n e = PopState (PQ.fromList (replicate n (0,Walker c 1 0))) 0 dt [] (fromIntegral n) cuspsJastrow3d e []
 
 type M x = RandT StdGen (State PopulationState) x
 
 getEnergy :: M Double
 getEnergy = energy <$> lift get
 
-getEnergyUncertainty :: M Double
-getEnergyUncertainty = energyUncertainty <$> lift get
-
-incVariance :: M ()
-incVariance = lift $ modify (\ps -> ps{popVariance = popVariance ps + 1})
+getRequiredError :: M Double
+getRequiredError = requiredError <$> lift get
 
 uniformVar :: M Double
 uniformVar = liftRandT (pure . random)
@@ -57,24 +57,24 @@ normalVar = do
 stepWalker :: M ()
 stepWalker = pushWalkers =<< splitWalker =<< moveWalker =<< popWalker
 
--- TODO
 splitWalker :: Walker -> M [Walker]
 splitWalker (Walker c a t) =
-    if abs a < 1 then (\x -> if abs a < x then incVariance >> pure [] else pure [Walker c 1 t]) =<< uniformVar
-    else if abs a > 2 then incVariance >> pure [Walker c (a/2) t, Walker c (a/2) t]
+    if abs a < 1 then (\x -> if abs a < x then pure [] else pure [Walker c 1 t]) =<< uniformVar
+    else if abs a > 3 then pure [Walker c (a/2) t, Walker c (a/2) t]
     else pure [Walker c a t]
 
 moveWalker :: Walker -> M Walker
 moveWalker (Walker c a t) = do
         let Conf ps = c
-        dt <- (min (-t) . flip suitableStepSize c . const 0.1) <$> getEnergyUncertainty
-        c' <- Conf <$> mapM (moveParticle dt) ps
-        let v = (potentialEnergy c + potentialEnergy c')/2
+        dt <- (min (-t) . flip suitableStepSize c) <$> getRequiredError
+        PopState{ansatz=an} <- lift get
+        c' <- Conf <$> mapM (moveParticle dt) (zip ps (drift an c))
+        let v = (potentialEnergy c - aEnergy an c + potentialEnergy c' - aEnergy an c')/2
         e <- getEnergy
         let a' = a * exp (-dt * (v-e))
-        return (Walker c' a' (t+dt))
-    where moveParticle :: Double -> (Position, Particle) -> M (Position, Particle)
-          moveParticle dt (r, p) = (,p) <$> mapM (\x -> ((x+) . (sqrt (dt/particleMass p)*)) <$> normalVar) r
+        return $ Walker c' a' (t+dt)
+    where moveParticle :: Double -> ((Position, Particle),[Double]) -> M (Position, Particle)
+          moveParticle dt ((r, p), d) = let dt' = dt/particleMass p in (,p) <$> zipWithM (\x dx -> ((x+dt'*dx+) . (sqrt dt'*)) <$> normalVar) r d
 
 pushWalkers :: [Walker] -> M ()
 pushWalkers ws = lift $ modify (\ps -> ps{walkerSet = foldr (\w -> PQ.insert (localTime w) w) (walkerSet ps) ws})
@@ -111,7 +111,7 @@ trimWalkerSet = lift $ do
     where halve (x:x':xs) = x:halve xs
           halve xs = xs
 
-step :: M ()
+step :: M Double
 step = do
     ps0 <- lift get
     if (population ps0 == 0) then error "Sample population extinct." else return ()
@@ -119,10 +119,25 @@ step = do
     loopSteps
     ps <- lift $ get
     let pop' = totalAmplitude ps
-    let energyEstimate = traceShowId $ energy ps + log (pop/pop') / deltaTime ps
-    let relaxationTime = deltaTime ps * sqrt (pop * pop / (popVariance ps + 1))
-    let energy' = (energySum ps + energyEstimate) / fromIntegral (iterations ps + 1) + log (setPoint ps / pop) * 1 / relaxationTime
-    lift $ put ps{energy = energy', energySum = energySum ps + energyEstimate, popVariance = 0, variance = variance ps + popVariance ps / (pop * deltaTime ps)^2, iterations = iterations ps + 1}
+    let energyEstimate = energy ps + log (pop/pop') / deltaTime ps
+    let variance' = addDataPoint energyEstimate (variance ps)
+    let relaxationTime = deltaTime ps * getTimeAtBound 1 variance'
+    let (averagedEnergy, randomError) = getMeanAndStddev variance'
+    let energy' = averagedEnergy + log (setPoint ps / pop) / relaxationTime
+    lift $ put ps{energy = energy', variance = variance' {-, dataSeries = energyEstimate : dataSeries ps-}}
     shiftWalkerTimes
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()
     if pop' > setPoint ps * 4 then trimWalkerSet else return ()
+    return randomError
+
+
+-- For debugging purposes. Potentially also useful for identifying excited states.
+showCorrelation :: M ()
+showCorrelation = do
+        l' <- dataSeries <$> lift get
+        let l = map (\x -> x-average l') l'
+        let s = intercalate "," $ take 300 $ map (show . realPart) $ ifft $ map (\x -> x*conjugate x/(fromIntegral (length l)^2)) $ fft $ map (:+ 0) l
+        trace (show (length l) ++ "\n" ++ s ++ "\n\n") $ return ()
+    where averages n [] = []
+          averages n xs = average (take n xs) : averages n (drop n xs)
+          average xs = sum xs / fromIntegral (length xs)
