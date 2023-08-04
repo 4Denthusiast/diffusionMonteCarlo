@@ -12,7 +12,6 @@ module Walk (
 import Particle
 import Configuration
 import Ansatz
-import qualified PriorityQueue as PQ
 import Variance
 
 import qualified Data.Array as A
@@ -24,18 +23,16 @@ import Control.Monad.Random
 import Control.Monad.Trans.State
 import Math.List.FFT
 
-type WalkerSet = PQ.PriorityQueue Double Walker
-
-data PopulationState = forall a. Ansatz a => PopState {walkerSet :: WalkerSet, energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, ansatz :: a, requiredError :: Double, dataSeries :: [Double]}
+data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, ansatz :: a, requiredError :: Double, dataSeries :: [Double]}
 
 population :: PopulationState -> Int
-population = PQ.size . walkerSet
+population = length . walkerSet
 
 totalAmplitude :: PopulationState -> Double
-totalAmplitude = sum . map (amplitude . snd) . PQ.toAscList . walkerSet
+totalAmplitude = sum . map amplitude . walkerSet
 
 initialPopState :: Configuration -> Double -> Int -> Double -> PopulationState
-initialPopState c dt n e = PopState (PQ.fromList (replicate n (0,Walker c 1 0))) 0 dt [] (fromIntegral n) cuspsJastrow3d e []
+initialPopState c dt n e = PopState (replicate n (Walker c 1 0)) 0 dt [] (fromIntegral n) cuspsJastrow3d e []
 
 type M x = RandT StdGen (State PopulationState) x
 
@@ -54,8 +51,8 @@ normalVar = do
     t <- uniformVar
     return $ sqrt (-2*log d) * cos (pi*t)
 
-stepWalker :: M ()
-stepWalker = pushWalkers =<< splitWalker =<< moveWalker =<< popWalker
+stepWalkers :: [Walker] -> M [Walker]
+stepWalkers = (concat <$>) . mapM (\w -> if localTime w >= 0 then return [w] else stepWalkers =<< splitWalker =<< moveWalker w)
 
 splitWalker :: Walker -> M [Walker]
 splitWalker (Walker c a t) =
@@ -66,7 +63,7 @@ splitWalker (Walker c a t) =
 moveWalker :: Walker -> M Walker
 moveWalker (Walker c a t) = do
         let Conf ps = c
-        dt <- (min (-t) . flip suitableStepSize c) <$> getRequiredError
+        dt <- flip suitableStepSize c <$> getRequiredError
         PopState{ansatz=an} <- lift get
         c' <- Conf <$> mapM (moveParticle dt) (zip ps (drift an c))
         let v = (potentialEnergy c - aEnergy an c + potentialEnergy c' - aEnergy an c')/2
@@ -76,38 +73,25 @@ moveWalker (Walker c a t) = do
     where moveParticle :: Double -> ((Position, Particle),[Double]) -> M (Position, Particle)
           moveParticle dt ((r, p), d) = let dt' = dt/particleMass p in (,p) <$> zipWithM (\x dx -> ((x+dt'*dx+) . (sqrt dt'*)) <$> normalVar) r d
 
-pushWalkers :: [Walker] -> M ()
-pushWalkers ws = lift $ modify (\ps -> ps{walkerSet = foldr (\w -> PQ.insert (localTime w) w) (walkerSet ps) ws})
-
-popWalker :: M Walker
-popWalker = lift $ do
-    ps <- get
-    let Just (w, ws') = PQ.pop $ walkerSet ps
-    put ps{walkerSet = ws'}
-    return w
-
-nextTime :: M Double
-nextTime = fromMaybe (1/0) <$> PQ.next <$> walkerSet <$> lift get
-
 loopSteps :: M ()
 loopSteps = do
-    nt <- nextTime
-    if nt < 0 then stepWalker >> loopSteps
-    else return ()
+    ps@PopState{walkerSet = ws} <- lift get
+    ws' <- stepWalkers ws
+    lift $ put ps{walkerSet = ws'}
 
 shiftWalkerTimes :: M ()
 shiftWalkerTimes = do
     dt <- deltaTime <$> lift get
-    let shift (_, Walker c a t) = (t-dt, Walker c a (t-dt))
-    lift $ modify (\ps -> ps{walkerSet = PQ.fromList $ map shift $ PQ.toAscList $ walkerSet ps})
+    let shift (Walker c a t) = (Walker c a (t-dt))
+    lift $ modify (\ps -> ps{walkerSet = map shift $ walkerSet ps})
 
 doubleWalkerSet :: M ()
-doubleWalkerSet = lift get >>= (\ps -> lift (put ps{walkerSet = PQ.union (walkerSet ps) (walkerSet ps)}))
+doubleWalkerSet = lift get >>= (\ps -> lift (put ps{walkerSet = walkerSet ps ++ walkerSet ps}))
 
 trimWalkerSet :: M ()
 trimWalkerSet = lift $ do
         ps <- get
-        put ps{walkerSet = PQ.fromList $ halve $ PQ.toAscList $ walkerSet ps}
+        put ps{walkerSet = halve $ walkerSet ps}
     where halve (x:x':xs) = x:halve xs
           halve xs = xs
 
@@ -119,7 +103,7 @@ step = do
     loopSteps
     ps <- lift $ get
     let pop' = totalAmplitude ps
-    let energyEstimate = energy ps + log (pop/pop') / deltaTime ps
+    let energyEstimate = traceShowId $ energy ps + log (pop/pop') / deltaTime ps
     let variance' = addDataPoint energyEstimate (variance ps)
     let relaxationTime = deltaTime ps * getTimeAtBound 1 variance'
     let (averagedEnergy, randomError) = getMeanAndStddev variance'

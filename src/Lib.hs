@@ -10,7 +10,6 @@ module Lib (
 
 import Configuration
 import Walk
-import qualified PriorityQueue as PQ
 import Variance
 
 import Control.Monad.Random
