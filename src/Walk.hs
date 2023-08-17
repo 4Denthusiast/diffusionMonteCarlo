@@ -23,7 +23,7 @@ import Control.Monad.Random
 import Control.Monad.Trans.State
 import Math.List.FFT
 
-data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, ansatz :: a, requiredError :: Double, dataSeries :: [Double]}
+data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, requiredError :: Double, dataSeries :: [Double], ansatz :: a}
 
 population :: PopulationState -> Int
 population = length . walkerSet
@@ -31,8 +31,14 @@ population = length . walkerSet
 totalAmplitude :: PopulationState -> Double
 totalAmplitude = sum . map amplitude . walkerSet
 
-initialPopState :: Configuration -> Double -> Int -> Double -> PopulationState
-initialPopState c dt n e = PopState (replicate n (Walker c 1 0)) 0 dt [] (fromIntegral n) cuspsJastrow3d e []
+initialPopState :: Configuration -> Double -> Int -> Double -> String -> PopulationState
+initialPopState c dt n e a = case a of
+        "" -> incomplete ()
+        "c3d" -> incomplete cuspsJastrow3d
+        "h3d" -> incomplete hydrogenStyle3d
+        _ -> error ("Unrecognised ansatz name: \""++a++"\"")
+    where incomplete :: forall x. Ansatz x => x -> PopulationState
+          incomplete = PopState (replicate n (Walker c 1 0)) 0 dt [] (fromIntegral n) e []
 
 type M x = RandT StdGen (State PopulationState) x
 
@@ -56,14 +62,14 @@ stepWalkers = (concat <$>) . mapM (\w -> if localTime w >= 0 then return [w] els
 
 splitWalker :: Walker -> M [Walker]
 splitWalker (Walker c a t) =
-    if abs a < 1 then (\x -> if abs a < x then pure [] else pure [Walker c 1 t]) =<< uniformVar
-    else if abs a > 3 then pure [Walker c (a/2) t, Walker c (a/2) t]
+    if abs a < 0.5 then (\x -> if abs a < x then pure [] else pure [Walker c 1 t]) =<< uniformVar
+    else if abs a > 2 then pure [Walker c (a/2) t, Walker c (a/2) t]
     else pure [Walker c a t]
 
 moveWalker :: Walker -> M Walker
 moveWalker (Walker c a t) = do
         let Conf ps = c
-        dt <- flip suitableStepSize c <$> getRequiredError
+        dt <- (min (-t) . flip suitableStepSize c) <$> getRequiredError
         PopState{ansatz=an} <- lift get
         c' <- Conf <$> mapM (moveParticle dt) (zip ps (drift an c))
         let v = (potentialEnergy c - aEnergy an c + potentialEnergy c' - aEnergy an c')/2
@@ -103,16 +109,16 @@ step = do
     loopSteps
     ps <- lift $ get
     let pop' = totalAmplitude ps
-    let energyEstimate = traceShowId $ energy ps + log (pop/pop') / deltaTime ps
-    let variance' = addDataPoint energyEstimate (variance ps)
-    let relaxationTime = deltaTime ps * getTimeAtBound 1 variance'
-    let (averagedEnergy, randomError) = getMeanAndStddev variance'
-    let energy' = averagedEnergy + log (setPoint ps / pop) / relaxationTime
+    let growthEstimate = (\x -> traceShow (-log x/deltaTime ps) x) $ traceShowId $ exp (-energy ps * deltaTime ps) * pop'/pop
+    let variance' = addDataPoint growthEstimate (variance ps)
+    let relaxationTime = traceShowId $ deltaTime ps * getTimeAtBound 0.5 variance'
+    let (averagedGrowth, randomError) = getMeanAndStddev variance'
+    let energy' = -log averagedGrowth / deltaTime ps + log (setPoint ps / pop) / relaxationTime
     lift $ put ps{energy = energy', variance = variance' {-, dataSeries = energyEstimate : dataSeries ps-}}
     shiftWalkerTimes
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()
     if pop' > setPoint ps * 4 then trimWalkerSet else return ()
-    return randomError
+    return (randomError / deltaTime ps)
 
 
 -- For debugging purposes. Potentially also useful for identifying excited states.

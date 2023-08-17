@@ -2,11 +2,13 @@ module Ansatz (
     Ansatz(..),
     JastrowAnsatz(..),
     cuspsJastrow3d,
+    hydrogenStyle3d
 ) where
 
 import Particle
 import Configuration
 
+import Data.List
 import Debug.Trace
 
 {-
@@ -15,10 +17,12 @@ The change in position this implies per time step is drift*dt/m.
 aEnergy gives Σ_i (∇_xi^2 Ψ)/2mΨ, which should be used as the energy offset.
 -}
 class Ansatz a where
+    aValue :: a -> Configuration -> Double
     drift :: a -> Configuration -> [[Double]]
     aEnergy :: a -> Configuration -> Double
 
 instance Ansatz () where
+    aValue () _ = 1
     drift () (Conf ps) = map (\_ -> replicate (confDimension (Conf ps)) 0) ps
     aEnergy () _ = 0
 
@@ -44,6 +48,7 @@ In 2D, there is no cusp. f'(r) -> 0 as r -> 0, though not smoothly.
 
 -- There are a lot of re-calculations involved in this, but for now I'd rather keep it neat than make it efficient. Maybe the compiler will spot some of them.
 instance Ansatz JastrowAnsatz where
+    aValue (Jastrow f) (Conf ps) = exp $ sum $ concat $ zipWith (\(x0,p0) ps' -> map (\(x1,p1) -> fst3 $ f p0 p1 (dist x0 x1)) ps') ps (tail (tails ps))
     drift (Jastrow f) (Conf ps) = flip map ps (\(x0,p0) -> foldr1 (zipWith (+)) $ flip map ps (\(x1,p1) -> if x0 == x1 then repeat 0.0 else let
             x = zipWith (-) x0 x1
             r = sqrt $ sum $ map (^2) x
@@ -56,5 +61,11 @@ instance Ansatz JastrowAnsatz where
             in (f'' + (fromIntegral (confDimension (Conf ps)) - 1) * f'/r)/(2*particleMass p0)
         ))) ps (drift (Jastrow f) (Conf ps))
 
+fst3 (x,_,_) = x
+
 cuspsJastrow3d :: JastrowAnsatz
 cuspsJastrow3d = Jastrow $ \p0 p1 r -> let s = particleCharge p0 * particleCharge p1/(1/particleMass p0 + 1/particleMass p1) in (-s/(r+1), s/(r+1)^2, -2*s/(r+1)^3)
+
+-- Exact for hydrogen-like atoms (in 3D only)
+hydrogenStyle3d :: JastrowAnsatz
+hydrogenStyle3d = Jastrow $ \p0 p1 r -> let x = particleCharge p0 * particleCharge p1/(1/particleMass p0 + 1/particleMass p1) in (x*r, x, 0)
