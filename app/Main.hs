@@ -16,9 +16,9 @@ main = do
         arguments <- getArgs
         case parseArguments arguments defaultExecutionParameters of
             Left err -> putStrLn err
-            Right (ExecutionParameters{dimension=d, atomicNumber=z, charge=q, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a}) -> do
-              initialSystem <- initSystem dt 200 e (createAtom d z q) a
-              stabilised <- prepare 2000 initialSystem
+            Right (ExecutionParameters{dimension=d, atomicNumber=z, charge=q, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p}) -> do
+              initialSystem <- initSystem dt w e (createAtom d z q) a
+              stabilised <- prepare p initialSystem
               mWindow <- if ug then Just <$> createWindow else return Nothing
               continue e mWindow (resetIteration stabilised)
     where prepare 0 s = pure s
@@ -37,7 +37,9 @@ data ExecutionParameters = ExecutionParameters {
     requiredError :: Double,
     timeStep :: Double,
     useGraphics :: Bool,
-    ansatzName :: String
+    ansatzName :: String,
+    walkerCount :: Int,
+    prepSteps :: Int
 }
 
 defaultExecutionParameters = ExecutionParameters {
@@ -47,7 +49,9 @@ defaultExecutionParameters = ExecutionParameters {
     requiredError = 0.01,
     timeStep = 0.05,
     useGraphics = False,
-    ansatzName = ""
+    ansatzName = "",
+    walkerCount = 200,
+    prepSteps = 1000
 }
 
 parseArguments :: [String] -> ExecutionParameters -> Either String ExecutionParameters
@@ -59,6 +63,8 @@ parseArguments (arg:args) xp = case arg of
         "-r" -> requireNumber False "-r" args (\x -> xp{requiredError = x})
         "-t" -> requireNumber False "-t" args (\x -> xp{timeStep = x})
         "-g" -> parseArguments args xp{useGraphics = True}
+        "-w" -> requireNumber True "-w" args (\n -> xp{walkerCount = n})
+        "-p" -> requireNumber True "-p" args (\n -> xp{prepSteps = n})
         "-a" -> case args of
             (n:args') -> parseArguments args' xp{ansatzName = n}
             [] -> Left ("-a option must be followed by a string.")

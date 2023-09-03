@@ -28,12 +28,12 @@ createWindow = do
     initGUI
     window <- windowNew
     windowSetTitle window "DMC simulation"
-    windowSetDefaultSize window 1000 1000
+    windowSetDefaultSize window 2000 2000
     canvas <- drawingAreaNew
     containerAdd window canvas
     widgetShowAll window
-    let (width,height) = (70,70)
-    imageVar <- newMVar (listArray ((1,1),(width,height)) (replicate (width*height) [0,0,0]), listArray (1,width) (replicate width [0]))
+    let (width,height,gLength) = (200,200,70)
+    imageVar <- newMVar (listArray ((1,1),(width,height)) (replicate (width*height) [0,0,0]), listArray (1,gLength) (replicate width [0]))
     let gs = GraphicsState window canvas imageVar
     timeoutAdd (displayLoop gs) 100
     forkIO mainGUI
@@ -56,7 +56,7 @@ updateImage pop img = accum (zipWith (+)) img (concatMap walkerPix (walkerSet po
                   [x,y] = take 2 (p ++ [0,0])
                   r = sqrt $ sum $ map (^2) p
                   r2d = sqrt $ x*x+y*y
-                  s = 0.3
+                  s = 0.1
               in if r == 0 then (0,0) else (x*s*r/r2d,y*s*r/r2d)
           inBounds (x,y) = 1 <= x && x <= w && 1 <= y && y <= h
           particleColour Electron = [1,1,0]
@@ -70,9 +70,10 @@ updateGraph pop graph = accum (zipWith (+)) graph (concatMap walkerPix (walkerSe
           particlePix p = let
                   x = particlePos p
                   x' = ceiling $ fromIntegral l * x
-                  d = fromIntegral (length p)
-              in (x', (fromIntegral x' ** d - fromIntegral (x'-1) ** d) / exp (x/0.3))
-          particlePos p = (*0.3) $ sqrt $ sum $ map (^2) p
+              in (x', (volume x' - volume (x'-1))/(sum (map (^2) p)**0.75))
+          particlePos p = (/3) $ (+1) $ logBase 100 $ sum $ map (^2) p
+          d = fromIntegral $ confDimension $ (\(Walker c _ _:_) -> c) $ walkerSet pop
+          volume x = 10**(((fromIntegral x / fromIntegral l)*2-1)*d)
           inBounds x = x > 0 && x <= l
 
 displayLoop :: GraphicsState -> IO Bool

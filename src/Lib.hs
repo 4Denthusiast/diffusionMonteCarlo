@@ -24,8 +24,9 @@ initSystem :: Double -> Int -> Double -> Configuration -> String -> IO (StdGen, 
 initSystem dt n e c a = (,initialPopState c dt n e a) <$> getStdGen
 
 showPopulationState :: PopulationState -> String
-showPopulationState ps = printf "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" (population ps) (totalAmplitude ps) (-log growth / deltaTime ps) (error / deltaTime ps)
+showPopulationState ps = printf (if abs e >= 0.1 then "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" else "pop=%d, pop(w)=%.2f, E=%+.5e +- %.1e") (population ps) (totalAmplitude ps) e (error / deltaTime ps)
     where (growth, error) = getMeanAndStddev $ variance ps
+          e = -log growth / deltaTime ps
 
 resetIteration :: (StdGen, PopulationState) -> (StdGen, PopulationState)
 resetIteration (r, ps) = (r,ps{variance=[],dataSeries=[]})
