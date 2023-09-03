@@ -36,6 +36,7 @@ initialPopState c dt n e a = case a of
         "" -> incomplete ()
         "c3d" -> incomplete cuspsJastrow3d
         "h3d" -> incomplete hydrogenStyle3d
+        "p" -> incomplete (PictureAnsatz 1)
         _ -> error ("Unrecognised ansatz name: \""++a++"\"")
     where incomplete :: forall x. Ansatz x => x -> PopulationState
           incomplete = PopState (replicate n (Walker c 1 0)) 0 dt [] (fromIntegral n) e []
@@ -110,10 +111,10 @@ step = do
     ps <- lift $ get
     let pop' = totalAmplitude ps
     let growthEstimate = (\x -> traceShow (-log x/deltaTime ps) x) $ traceShowId $ exp (-energy ps * deltaTime ps) * pop'/pop
-    let variance' = addDataPoint growthEstimate (variance ps)
+    let variance' = addDataPoint growthEstimate (pop'/setPoint ps) (variance ps) -- If I want to reduce population-control bias further by keeping a separate estimate of what the actual population should be, that should be used in the weight parameter here, but it doesn't seem like population control is actually a major issue.
     let relaxationTime = traceShowId $ deltaTime ps * getTimeAtBound 0.5 variance'
     let (averagedGrowth, randomError) = getMeanAndStddev variance'
-    let energy' = -log averagedGrowth / deltaTime ps + log (setPoint ps / pop) / relaxationTime
+    let energy' = -log averagedGrowth / deltaTime ps + log (setPoint ps / pop') / relaxationTime
     lift $ put ps{energy = energy', variance = variance' {-, dataSeries = energyEstimate : dataSeries ps-}}
     shiftWalkerTimes
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()

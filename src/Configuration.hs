@@ -40,7 +40,7 @@ suitableStepSize :: Double -> Configuration -> Double
 suitableStepSize de c@(Conf ps) = min ordinaryBound radiusBound
     where ordinaryBound = (de/(sum $ concat $ zipWith (\p t -> map (dv2 p) t) ps (tail $ tails ps)))**(1/3) -- t^3 < E/|V|^2
           dv2 (r0,p0) (r1,p1) = dist2 r0 r1 ^^ (1-confDimension c)
-          radiusBound = (0.1*) $ minimum $ concat $ zipWith (\p t -> map (rb p) t) ps (tail $ tails ps) -- the distance that may be travelled is less than the distance between any two particles
+          radiusBound = (0.07*) $ minimum $ concat $ zipWith (\p t -> map (rb p) t) ps (tail $ tails ps) -- the distance that may be travelled is less than the distance between any two particles
           rb (r0,p0) (r1,p1) = dist2 r0 r1
 
 dist2 :: Position -> Position -> Double

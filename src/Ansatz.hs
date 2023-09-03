@@ -2,7 +2,8 @@ module Ansatz (
     Ansatz(..),
     JastrowAnsatz(..),
     cuspsJastrow3d,
-    hydrogenStyle3d
+    hydrogenStyle3d,
+    PictureAnsatz(..)
 ) where
 
 import Particle
@@ -69,3 +70,18 @@ cuspsJastrow3d = Jastrow $ \p0 p1 r -> let s = particleCharge p0 * particleCharg
 -- Exact for hydrogen-like atoms (in 3D only)
 hydrogenStyle3d :: JastrowAnsatz
 hydrogenStyle3d = Jastrow $ \p0 p1 r -> let x = particleCharge p0 * particleCharge p1/(1/particleMass p0 + 1/particleMass p1) in (x*r, x, 0)
+
+-- Optimised for getting good pictures rather than good energy values.
+data PictureAnsatz = PictureAnsatz Double
+
+instance Ansatz PictureAnsatz where
+    aValue (PictureAnsatz r0) (Conf ps) = product $ map (\(p,_) -> recip $ sqrt $ (r0+) $ sum $ map (^2) p) ps
+    drift (PictureAnsatz r0) (Conf ps) = map (\(p,_) -> map (\x -> -x/(r0 + sum (map (^2) p))) p) ps
+    aEnergy (PictureAnsatz r0) (Conf ps) = sum $ map (\(p,t) -> let
+            d = fromIntegral $ length p
+            r = sqrt $ sum $ map (^2) p
+        in (3*r*r/(r0+r*r)-d)/(r0+r*r)/(2*particleMass t)) ps
+--d/dr 1/sqrt(r0+r^2) = -1/2 (r0+r^2)^-3/2 2r = -r/(r0+r^2)^3/2
+--d/dr p(r0,r) / p(r0,r) = -r/(r0+r^2)
+--d^2/dr^2 1/sqrt(r0+r^2) = d/dr (-r/(r0+r^2)^3/2) = -1/(r0+rr)^3/2 + 3rr/(r0+rr)^5/2
+-- ∇^2 p(r0,r)/p(r0,r) = -1/(r0+rr) + 3rr/(r0+rr)^2 - (d-1)/(r0+rr)
