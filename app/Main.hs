@@ -7,6 +7,8 @@ import Configuration
 import Lib
 import Graphics
 
+import Data.Char
+import Debug.Trace
 import System.Environment
 import System.Random
 import Text.Read
@@ -16,8 +18,8 @@ main = do
         arguments <- getArgs
         case parseArguments arguments defaultExecutionParameters of
             Left err -> putStrLn err
-            Right (ExecutionParameters{dimension=d, atomicNumber=z, charge=q, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p}) -> do
-              initialSystem <- initSystem dt w e (createAtom d z q) a
+            Right (ExecutionParameters{dimension=d, atomSeps=as, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p}) -> do
+              initialSystem <- initSystem dt w e (createAtoms d as) a
               stabilised <- prepare p initialSystem
               mWindow <- if ug then Just <$> createWindow else return Nothing
               continue e mWindow (resetIteration stabilised)
@@ -28,12 +30,11 @@ main = do
             mapM (updateGraphics $ snd s') mWindow
             if e' < e then return () else continue e mWindow s'
 
-dihydrogen3 = Conf [([-0.6,0,0],Nucleus 1),([0.6,0,0],Nucleus 1),([1,0,0],Electron),([-1,0,0],Electron)]
+data AtomSep = Atom Int Int Double Int | Sep Double
 
 data ExecutionParameters = ExecutionParameters {
     dimension :: Int,
-    atomicNumber :: Int,
-    charge :: Int,
+    atomSeps :: [AtomSep],
     requiredError :: Double,
     timeStep :: Double,
     useGraphics :: Bool,
@@ -44,8 +45,7 @@ data ExecutionParameters = ExecutionParameters {
 
 defaultExecutionParameters = ExecutionParameters {
     dimension = 3,
-    atomicNumber = 1,
-    charge = 0,
+    atomSeps = [],
     requiredError = 0.01,
     timeStep = 0.05,
     useGraphics = False,
@@ -58,8 +58,6 @@ parseArguments :: [String] -> ExecutionParameters -> Either String ExecutionPara
 parseArguments [] xp = Right xp
 parseArguments (arg:args) xp = case arg of
         "-d" -> requireNumber True "-d" args (\n -> xp{dimension = n})
-        "-z" -> requireNumber True "-z" args (\n -> xp{atomicNumber = n})
-        "-q" -> requireNumber True "-q" args (\n -> xp{charge = n})
         "-r" -> requireNumber False "-r" args (\x -> xp{requiredError = x})
         "-t" -> requireNumber False "-t" args (\x -> xp{timeStep = x})
         "-g" -> parseArguments args xp{useGraphics = True}
@@ -68,8 +66,39 @@ parseArguments (arg:args) xp = case arg of
         "-a" -> case args of
             (n:args') -> parseArguments args' xp{ansatzName = n}
             [] -> Left ("-a option must be followed by a string.")
-        x -> Left ("Unrecognised argument: " ++ show x)
+        x -> case parseAsAtomSep x of
+            Nothing -> Left ("Unrecognised argument: " ++ show x)
+            Just a -> parseArguments args xp{atomSeps = a:atomSeps xp}
     where requireNumber int a [] f = Left ("\""++a++"\" option must be followed by " ++ if int then "an integer." else "a number.")
           requireNumber int a (ns:args') f = case readMaybe ns of
             Nothing -> Left ("\""++a++"\" option must be followed by " ++ if int then "an integer." else "a number.")
             Just n -> parseArguments args' (f n)
+
+parseAsAtomSep :: String -> Maybe AtomSep
+parseAsAtomSep s = case reads s of
+    [(d,"")] -> Just (Sep d)
+    _ -> do
+        let (zs,(as,(qs,rest))) = ((span (flip elem "+-") <$>) . span isDigit) <$> span isAlpha s
+        m <- case rest of
+            "" -> Just (1/0)
+            ('m':ms) -> case reads ms of
+                [(n,"")] -> Just n
+                _ -> Nothing
+        z <- case zs of
+            "H" -> Just 1
+            "He" -> Just 2
+            "Li" -> Just 3
+            "Be" -> Just 4
+            _ -> Nothing
+        let a = case as of
+                "" -> if z == 1 then 1 else z*2
+                _ -> read as
+        let q = length (filter (=='+') qs) - length (filter (=='-') qs)
+        return $ Atom z a m q
+
+createAtoms :: Int -> [AtomSep] -> Configuration
+createAtoms d [] = createAtoms d [Atom 1 1 (1/0) 0]
+createAtoms d as = Conf $ traceShowId $ createAtoms' 0 (replicate (d-2) 0) (if d>=4 then 1 else 0) as
+    where createAtoms' x zs s [] = []
+          createAtoms' x zs s (Atom z a m q : as) = (x:0:zs,Nucleus (fromIntegral z) (fromIntegral a*s) m) : map (\y -> (x:fromIntegral y:zs,Electron)) [1..(z-q)] ++ createAtoms' (x+1) zs s as
+          createAtoms' x zs s (Sep x' : as) = createAtoms' (x+x'-1) zs s as

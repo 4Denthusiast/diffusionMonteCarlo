@@ -60,7 +60,7 @@ updateImage pop img = accum (zipWith (+)) img (concatMap walkerPix (walkerSet po
               in if r == 0 then (0,0) else (x*s*r/r2d,y*s*r/r2d)
           inBounds (x,y) = 1 <= x && x <= w && 1 <= y && y <= h
           particleColour Electron = [1,1,0]
-          particleColour (Nucleus _) = [0,0,1]
+          particleColour (Nucleus _ _ _) = [0,0,1]
 
 updateGraph :: PopulationState -> Array Int [Double] -> Array Int [Double]
 updateGraph pop graph = accum (zipWith (+)) graph (concatMap walkerPix (walkerSet pop))

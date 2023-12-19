@@ -3,7 +3,6 @@
 module Lib (
     stepAndTrace,
     initialPopState,
-    createAtom,
     initSystem,
     resetIteration,
 ) where

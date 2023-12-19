@@ -38,6 +38,16 @@ For the error to be less than E, it is therefore necessary that t^3/12 << E/|∇
 
 In 3D, for small enough r, the chance of jumping all the way from r for to r' (for small r) is about r'^3/r^2 (in 2D it's r'^2/r^2/3), giving a V factor of about exp(r^4/3 / r'). The total expectation is then about int_0^r exp(r^4/3 / r') (r'/r)^2 dr' which is obviously infinite, which is why my 3D simulations keep stopping. In 2D, it's int_0^r exp(-r^2/3 ln(r')) r'/r^2/3 dr' = int_0^r r'^(1-r^2/3) r^-2/3 dr' = [r'^(2-r^2/3) / (r^2/3 - r^3/4)]_0^r, which is actually fine for small r (it isn't fine for large r, but in that case the error becomes exponentially less likely as the allowed time step reduces).
 
+
+#### Perfect steps
+If a particle is released at t=0 and follows a 1D Wiener process until it reaches |x|>1 at which point it is deleted, the probability density function is
+p(x,t) = 1/sqrt(2pi t) sum_n (-1)^n exp(-(x-2n)^2/2t)
+Therefore the probability is still exists is
+1/sqrt(2pi t) int_-1^1 sum_n (-1)^n exp(-(x-2n)^2/2t)
+=1/sqrt(2pi t) int_-l^l sum_n (-1)^n exp(-(x^2-4xn+4n^2)/2t)
+=1/sqrt(2pi t) int_-l^l sum_n (-1)^n exp(-(x^2)/2t) exp(2xn/t) exp(-2n^2/t)
+
+
 #### Variance:
 Each time a walker goes below a value a of 1, it contributes a variance of a(1-a).
 

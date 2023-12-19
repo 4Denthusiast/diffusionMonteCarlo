@@ -6,8 +6,7 @@ module Configuration (
     potentialEnergy,
     suitableStepSize,
     dist,
-    dist2,
-    createAtom
+    dist2
 ) where
 
 import Particle
@@ -27,13 +26,18 @@ confDimension (Conf ps) = length $ fst $ head ps
 
 potentialEnergy :: Configuration -> Double
 potentialEnergy c@(Conf ps) = sum $ concat $ zipWith (\p t -> map (pairEnergy p) t) ps (tail $ tails ps)
-    where pairEnergy (r0,p0) (r1,p1) = coulumb (dist r0 r1) * particleCharge p0 * particleCharge p1 * if d < 4 || (p0 == Electron) == (p1 == Electron) then 1 else (1 - 1.8 * exp (-dist r0 r1))
+    where pairEnergy (r0,p0) (r1,p1) = coulumb (dist r0 r1) * case (p0,p1) of
+              (Electron,Electron) -> 1
+              (Nucleus q q' _,Electron) -> q'*exp(-dist r0 r1)-q
+              (Electron,Nucleus q q' _) -> q'*exp(-dist r0 r1)-q
+              (Nucleus q1 q'1 _,Nucleus q2 q'2 _) -> q1*q2 - sChargeRatio*q'1*q'2*exp(-dist r0 r1)
           d = confDimension c
           coulumb = case d of
               2 -> negate . log
               3 -> recip
               4 -> (coulumb4D*) . (^^(-2)) -- In this case, it can't be normalised to 1.
           coulumb4D = 0.9
+          sChargeRatio = 0 --The ratio of the s charges of a nucleon and an electron. Realistically this should be some high value, but it doesn't matter all that much.
 
 -- Decrease the step-size when the potential energy is locally highly variable (i.e. when particles are nearby), and adapt to the desired energy error.
 suitableStepSize :: Double -> Configuration -> Double
@@ -52,6 +56,3 @@ dist r0 r1 = sqrt $ dist2 r0 r1
 -- Fill with 0s up to the specified dimension.
 pad :: Int -> Position -> Position
 pad d r = take d $ r ++ repeat 0
-
-createAtom :: Int -> Int -> Int -> Configuration
-createAtom d z q = Conf $ (pad d [0], Nucleus z) : map (\n -> (pad d [fromIntegral n], Electron)) [1..(z-q)]
