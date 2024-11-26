@@ -17,3 +17,8 @@ particleCharge (Nucleus n _ _) = n
 instance Show Particle where
     show Electron = "e"
     show (Nucleus z a m) = "Z"++show z++"A"++show a++(if m<1/0 then "m"++show m else "")
+
+instance Ord Particle where
+    compare p p' = compare (t p) (t p')
+        where t Electron = Nothing
+              t (Nucleus z a m) = Just (z,a,m)

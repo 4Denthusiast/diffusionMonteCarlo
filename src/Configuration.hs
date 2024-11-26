@@ -6,13 +6,15 @@ module Configuration (
     potentialEnergy,
     suitableStepSize,
     dist,
-    dist2
+    dist2,
+    showConfig
 ) where
 
 import Particle
 
 import Data.List
 import Debug.Trace
+import Text.Printf
 
 
 type Position = [Double]
@@ -56,3 +58,9 @@ dist r0 r1 = sqrt $ dist2 r0 r1
 -- Fill with 0s up to the specified dimension.
 pad :: Int -> Position -> Position
 pad d r = take d $ r ++ repeat 0
+
+-- Sort of a lossy prettyprint thing. Shows the distance between each pair of particles.
+showConfig :: Configuration -> String
+showConfig (Conf ps) = show (map snd ps) ++ show (potentialEnergy $ Conf ps) ++ concatMap distsFrom ps
+    where distsFrom (x,_) = "\n[" ++ intercalate "," (map (distFrom x) ps) ++ "]"
+          distFrom x (y,_) = printf "%.2e" $ dist x y

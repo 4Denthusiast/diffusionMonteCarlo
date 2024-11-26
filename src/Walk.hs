@@ -119,6 +119,8 @@ step = do
     shiftWalkerTimes
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()
     if pop' > setPoint ps * 4 then trimWalkerSet else return ()
+    randomSample <- (walkerSet ps !!) <$> liftRandT (pure . randomR (0,length (walkerSet ps) - 1))
+    trace (showConfig $ configuration $ randomSample) $ return ()
     return (randomError / deltaTime ps)
 
 
