@@ -6,7 +6,9 @@ import Particle
 import Configuration
 import Lib
 import Graphics
+import Walk (normalVar)
 
+import Control.Monad.Random
 import Data.Char
 import Data.List
 import Debug.Trace
@@ -31,7 +33,7 @@ main = do
             mapM (updateGraphics $ snd s') mWindow
             if e' < e && n < 0 then return () else continue (n-1) e mWindow s'
 
-data AtomSep = Atom Int Int Double Int | Sep Double
+data AtomSep = Atom Int Int Double Int | Sep Double | Sep' Double
 
 data ExecutionParameters = ExecutionParameters {
     dimension :: Int,
@@ -78,6 +80,7 @@ parseArguments (arg:args) xp = case arg of
 parseAsAtomSep :: String -> Maybe AtomSep
 parseAsAtomSep s = case reads s of
     [(d,"")] -> Just (Sep d)
+    [(d,"*")] -> Just (Sep' d)
     _ -> do
         let (zs,(as,(qs,rest))) = ((span (flip elem "+-") <$>) . span isDigit) <$> span isAlpha s
         m <- case rest of
@@ -97,9 +100,18 @@ parseAsAtomSep s = case reads s of
         let q = length (filter (=='+') qs) - length (filter (=='-') qs)
         return $ Atom z a m q
 
-createAtoms :: Int -> [AtomSep] -> Configuration
+createAtoms :: Int -> [AtomSep] -> Rand StdGen Configuration
 createAtoms d [] = createAtoms d [Atom 1 1 (1/0) 0]
-createAtoms d as = Conf $ traceShowId $ reverse $ sortOn snd $ createAtoms' 0 (replicate (d-2) 0) (if d>=4 then 1 else 0) as
-    where createAtoms' x zs s [] = []
-          createAtoms' x zs s (Atom z a m q : as) = (x:0:zs,Nucleus (fromIntegral z) (fromIntegral a*s) m) : map (\y -> (x:fromIntegral y:zs,Electron)) [1..(z-q)] ++ createAtoms' (x+1) zs s as
-          createAtoms' x zs s (Sep x' : as) = createAtoms' (x+x'-1) zs s as
+createAtoms d as = (Conf . reverse . sortOn snd) <$> createAtoms' (replicate d 0) (if d>=4 then 1 else 0) as
+    where createAtoms' x s (Sep sep : Atom z a m q : as) = createAtoms'' (zipWith (+) x (sep:repeat 0)) s z a m q as
+          createAtoms' x s (Sep' sep : Atom z a m q : as) = do
+              x' <- randomOffset sep x
+              createAtoms'' x' s z a m q as
+          createAtoms' x s (Atom z a m q : as) = createAtoms'' (zipWith (+) x (1:repeat 0)) s z a m q as
+          createAtoms' x s _ = pure []
+          createAtoms'' x s z a m q as = do
+              es <- replicateM (z - q) ((,Electron) <$> randomOffset 4 x)
+              rest <- createAtoms' x s as
+              pure $ (x,Nucleus (fromIntegral z) (fromIntegral a*s) m) : rest ++ es
+          randomVector l = replicateM d $ (l*) <$> normalVar
+          randomOffset l x = zipWith (+) x <$> randomVector l

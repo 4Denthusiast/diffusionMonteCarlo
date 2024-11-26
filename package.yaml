@@ -43,6 +43,7 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
+    - MonadRandom
     - diffusionMonteCarlo
 
 tests:

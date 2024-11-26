@@ -6,7 +6,8 @@ module Walk (
     population,
     totalAmplitude,
     initialPopState,
-    step
+    step,
+    normalVar
 ) where
 
 import Particle
@@ -31,17 +32,18 @@ population = length . walkerSet
 totalAmplitude :: PopulationState -> Double
 totalAmplitude = sum . map amplitude . walkerSet
 
-initialPopState :: Configuration -> Double -> Int -> Double -> String -> PopulationState
-initialPopState c dt n e a = case a of
+initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> PopulationState
+initialPopState cs dt n e a = case a of
         "" -> incomplete ()
         "c3d" -> incomplete cuspsJastrow3d
         "h3d" -> incomplete hydrogenStyle3d
         "p" -> incomplete (PictureAnsatz 1)
         _ -> error ("Unrecognised ansatz name: \""++a++"\"")
     where incomplete :: forall x. Ansatz x => x -> PopulationState
-          incomplete = PopState (replicate n (Walker c 1 0)) 0 dt [] (fromIntegral n) e []
+          incomplete = PopState (map (\c -> Walker c 1 0) cs) 0 dt [] (fromIntegral n) e []
 
-type M x = RandT StdGen (State PopulationState) x
+type R m x = RandT StdGen m x
+type M x = R (State PopulationState) x
 
 getEnergy :: M Double
 getEnergy = energy <$> lift get
@@ -49,10 +51,10 @@ getEnergy = energy <$> lift get
 getRequiredError :: M Double
 getRequiredError = requiredError <$> lift get
 
-uniformVar :: M Double
+uniformVar :: (Monad m) => R m Double
 uniformVar = liftRandT (pure . random)
 
-normalVar :: M Double
+normalVar :: (Monad m) => R m Double
 normalVar = do
     d <- uniformVar
     t <- uniformVar
