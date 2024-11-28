@@ -33,7 +33,7 @@ main = do
             mapM (updateGraphics $ snd s') mWindow
             if e' < e && n < 0 then return () else continue (n-1) e mWindow s'
 
-data AtomSep = Atom Int Int Double Int | Sep Double | Sep' Double
+data AtomSep = Atom Int Int Double Int | SepF Double | SepR Double | SepN Double Double
 
 data ExecutionParameters = ExecutionParameters {
     dimension :: Int,
@@ -79,8 +79,11 @@ parseArguments (arg:args) xp = case arg of
 
 parseAsAtomSep :: String -> Maybe AtomSep
 parseAsAtomSep s = case reads s of
-    [(d,"")] -> Just (Sep d)
-    [(d,"*")] -> Just (Sep' d)
+    [(d,"")] -> Just (SepF d)
+    [(d,"*")] -> Just (SepR d)
+    [(d,'*':s')] -> case reads s' of
+        [(d',"")] -> Just (SepN d d')
+        _ -> Nothing
     _ -> do
         let (zs,(as,(qs,rest))) = ((span (flip elem "+-") <$>) . span isDigit) <$> span isAlpha s
         m <- case rest of
@@ -103,9 +106,12 @@ parseAsAtomSep s = case reads s of
 createAtoms :: Int -> [AtomSep] -> Rand StdGen Configuration
 createAtoms d [] = createAtoms d [Atom 1 1 (1/0) 0]
 createAtoms d as = (Conf . reverse . sortOn snd) <$> createAtoms' (replicate d 0) (if d>=4 then 1 else 0) as
-    where createAtoms' x s (Sep sep : Atom z a m q : as) = createAtoms'' (zipWith (+) x (sep:repeat 0)) s z a m q as
-          createAtoms' x s (Sep' sep : Atom z a m q : as) = do
+    where createAtoms' x s (SepF sep : Atom z a m q : as) = createAtoms'' (zipWith (+) x (sep:repeat 0)) s z a m q as
+          createAtoms' x s (SepR sep : Atom z a m q : as) = do
               x' <- randomOffset sep x
+              createAtoms'' x' s z a m q as
+          createAtoms' x s (SepN sep sep' : Atom z a m q : as) = do
+              x' <- randomOffset sep' (head x + sep : tail x)
               createAtoms'' x' s z a m q as
           createAtoms' x s (Atom z a m q : as) = createAtoms'' (zipWith (+) x (1:repeat 0)) s z a m q as
           createAtoms' x s _ = pure []
