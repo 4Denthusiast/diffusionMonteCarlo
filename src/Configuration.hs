@@ -1,10 +1,12 @@
 module Configuration (
     Position,
     Configuration(..),
+    Measurement(..),
     Walker(..),
     confDimension,
     potentialEnergy,
     suitableStepSize,
+    measure,
     dist,
     dist2,
     showConfig
@@ -21,7 +23,14 @@ type Position = [Double]
 
 data Configuration = Conf [(Position, Particle)] deriving Show
 
-data Walker = Walker {configuration :: Configuration, amplitude :: Double, localTime :: Double} deriving Show
+data Measurement = MDistance | MDipole | MOne
+
+instance Show Measurement where
+    show MDistance = "Particle separation"
+    show MDipole = "Dipole moment"
+    show MOne = "Constant one"
+
+data Walker = Walker {configuration :: Configuration, amplitude :: Double, localTime :: Double, measurementValues :: [Double]} deriving Show
 
 confDimension :: Configuration -> Int
 confDimension (Conf ps) = length $ fst $ head ps
@@ -40,6 +49,14 @@ potentialEnergy c@(Conf ps) = sum $ concat $ zipWith (\p t -> map (pairEnergy p)
               4 -> (coulumb4D*) . (^^(-2)) -- In this case, it can't be normalised to 1.
           coulumb4D = 0.9
           sChargeRatio = 0 --The ratio of the s charges of a nucleon and an electron. Realistically this should be some high value, but it doesn't matter all that much.
+
+measure :: Configuration -> Measurement -> Double
+measure (Conf ((r0,p0):(r1,p1):_)) MDistance = dist r0 r1
+measure (Conf ps) MDipole = sum $ map pDipole ps
+    where pDipole (r,p) = particleCharge p * (head r - centre)
+          centre = if length fixedParticles > 0 then (sum $ map (head . fst) fixedParticles)/fromIntegral (length fixedParticles) else (sum $ map (\(x:_,p) -> x * particleMass p) ps) / (sum $ map (particleMass . snd) ps)
+          fixedParticles = filter ((== 1/0) . particleMass . snd) ps
+measure _ MOne = 1 -- For debugging
 
 -- Decrease the step-size when the potential energy is locally highly variable (i.e. when particles are nearby), and adapt to the desired energy error.
 suitableStepSize :: Double -> Configuration -> Double

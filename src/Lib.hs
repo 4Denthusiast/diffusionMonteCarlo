@@ -19,15 +19,16 @@ import Text.Printf
 stepAndTrace :: (StdGen, PopulationState) -> IO (Double, (StdGen, PopulationState))
 stepAndTrace (r, ps) = putStrLn (showPopulationState ps) >> pure ((\((x,y),z) -> (x,(y,z))) $ runState (runRandT step r) ps)
 
-initSystem :: Double -> Int -> Double -> Rand StdGen Configuration -> String -> IO (StdGen, PopulationState)
-initSystem dt n e c a = do
+initSystem :: Double -> Int -> Double -> Rand StdGen Configuration -> String -> String -> IO (StdGen, PopulationState)
+initSystem dt n e c a m = do
     (cs,g) <- runRand (replicateM n c) <$> getStdGen
-    pure (g,initialPopState cs dt n e a)
+    pure (g,initialPopState cs dt n e a m)
 
 showPopulationState :: PopulationState -> String
 showPopulationState ps = printf (if abs e >= 0.1 then "pop=%d, pop(w)=%.2f, E=%+.5f +- %.1e" else "pop=%d, pop(w)=%.2f, E=%+.5e +- %.1e") (population ps) (totalAmplitude ps) e (error / deltaTime ps)
-    where (growth, error) = getMeanAndStddev $ variance ps
-          e = -log growth / deltaTime ps
+    where error = stdDev $ variance ps
+          e = -log (mean $ variance ps) / deltaTime ps
 
 resetIteration :: (StdGen, PopulationState) -> (StdGen, PopulationState)
-resetIteration (r, ps) = (r,ps{variance=[],dataSeries=[]})
+resetIteration (r, ps) = (r,ps{variance=emptyVariance,dataSeries=[],totalTime=0,walkerSet=map resetWalker (walkerSet ps)})
+    where resetWalker w = w{measurementValues = map (const 0) $ measurementsReqd ps}

@@ -21,8 +21,8 @@ main = do
         arguments <- getArgs
         case parseArguments arguments defaultExecutionParameters of
             Left err -> putStrLn err
-            Right (ExecutionParameters{dimension=d, atomSeps=as, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p}) -> do
-              initialSystem <- initSystem dt w e (createAtoms d as) a
+            Right (ExecutionParameters{dimension=d, atomSeps=as, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p, measurementNames = ms}) -> do
+              initialSystem <- initSystem dt w e (createAtoms d as) a ms
               stabilised <- prepare p initialSystem
               mWindow <- if ug then Just <$> createWindow else return Nothing
               continue p e mWindow (resetIteration stabilised)
@@ -43,7 +43,8 @@ data ExecutionParameters = ExecutionParameters {
     useGraphics :: Bool,
     ansatzName :: String,
     walkerCount :: Int,
-    prepSteps :: Int
+    prepSteps :: Int,
+    measurementNames :: String
 }
 
 defaultExecutionParameters = ExecutionParameters {
@@ -54,7 +55,8 @@ defaultExecutionParameters = ExecutionParameters {
     useGraphics = False,
     ansatzName = "",
     walkerCount = 200,
-    prepSteps = 1000
+    prepSteps = 1000,
+    measurementNames = ""
 }
 
 parseArguments :: [String] -> ExecutionParameters -> Either String ExecutionParameters
@@ -66,9 +68,8 @@ parseArguments (arg:args) xp = case arg of
         "-g" -> parseArguments args xp{useGraphics = True}
         "-w" -> requireNumber True "-w" args (\n -> xp{walkerCount = n})
         "-p" -> requireNumber True "-p" args (\n -> xp{prepSteps = n})
-        "-a" -> case args of
-            (n:args') -> parseArguments args' xp{ansatzName = n}
-            [] -> Left ("-a option must be followed by a string.")
+        "-a" -> requireString "-a" args (\s -> xp{ansatzName = s})
+        "-m" -> requireString "-m" args (\s -> xp{measurementNames = s})
         x -> case parseAsAtomSep x of
             Nothing -> Left ("Unrecognised argument: " ++ show x)
             Just a -> parseArguments args xp{atomSeps = a:atomSeps xp}
@@ -76,6 +77,8 @@ parseArguments (arg:args) xp = case arg of
           requireNumber int a (ns:args') f = case readMaybe ns of
             Nothing -> Left ("\""++a++"\" option must be followed by " ++ if int then "an integer." else "a number.")
             Just n -> parseArguments args' (f n)
+          requireString a [] f = Left ("\""++a++"\" option must be followed by a string.")
+          requireString a (s:args') f = parseArguments args' (f s)
 
 parseAsAtomSep :: String -> Maybe AtomSep
 parseAsAtomSep s = case reads s of

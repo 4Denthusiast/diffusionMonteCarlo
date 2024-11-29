@@ -24,7 +24,7 @@ import Control.Monad.Random
 import Control.Monad.Trans.State
 import Math.List.FFT
 
-data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, requiredError :: Double, dataSeries :: [Double], ansatz :: a}
+data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, totalTime :: Double, variance :: Variance, setPoint :: Double, requiredError :: Double, dataSeries :: [Double], measurementsReqd :: [Measurement], ansatz :: a}
 
 population :: PopulationState -> Int
 population = length . walkerSet
@@ -32,15 +32,21 @@ population = length . walkerSet
 totalAmplitude :: PopulationState -> Double
 totalAmplitude = sum . map amplitude . walkerSet
 
-initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> PopulationState
-initialPopState cs dt n e a = case a of
+initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> String -> PopulationState
+initialPopState cs dt n e a m = case a of
         "" -> incomplete ()
         "c3d" -> incomplete cuspsJastrow3d
         "h3d" -> incomplete hydrogenStyle3d
         "p" -> incomplete (PictureAnsatz 1)
         _ -> error ("Unrecognised ansatz name: \""++a++"\"")
     where incomplete :: forall x. Ansatz x => x -> PopulationState
-          incomplete = PopState (map (\c -> Walker c 1 0) cs) 0 dt [] (fromIntegral n) e []
+          incomplete = PopState ws 0 dt 0 emptyVariance (fromIntegral n) e [] mrs
+          ws = map (\c -> Walker c 1 0 (map (const 0) mrs)) cs
+          mrs = map (\l -> case l of
+                  'r' -> MDistance
+                  'd' -> MDipole
+                  '1' -> MOne
+              ) m
 
 type R m x = RandT StdGen m x
 type M x = R (State PopulationState) x
@@ -60,17 +66,17 @@ normalVar = do
     t <- uniformVar
     return $ sqrt (-2*log d) * cos (pi*t)
 
-stepWalkers :: [Walker] -> M [Walker]
-stepWalkers = (concat <$>) . mapM (\w -> if localTime w >= 0 then return [w] else stepWalkers =<< splitWalker =<< moveWalker w)
+stepWalkers :: [Measurement] -> [Walker] -> M [Walker]
+stepWalkers mrs = (concat <$>) . mapM (\w -> if localTime w >= 0 then return [w] else stepWalkers mrs =<< splitWalker =<< moveWalker mrs w)
 
 splitWalker :: Walker -> M [Walker]
-splitWalker (Walker c a t) =
-    if abs a < 0.5 then (\x -> if abs a < x then pure [] else pure [Walker c 1 t]) =<< uniformVar
-    else if abs a > 2 then pure [Walker c (a/2) t, Walker c (a/2) t]
-    else pure [Walker c a t]
+splitWalker (Walker c a t ms) =
+    if abs a < 0.5 then (\x -> if abs a < x then pure [] else pure [Walker c 1 t ms]) =<< uniformVar
+    else if abs a > 2 then pure [Walker c (a/2) t ms, Walker c (a/2) t ms]
+    else pure [Walker c a t ms]
 
-moveWalker :: Walker -> M Walker
-moveWalker (Walker c a t) = do
+moveWalker :: [Measurement] -> Walker -> M Walker
+moveWalker mrs (Walker c a t ms) = do
         let Conf ps = c
         dt <- (min (-t) . flip suitableStepSize c) <$> getRequiredError
         PopState{ansatz=an} <- lift get
@@ -78,20 +84,26 @@ moveWalker (Walker c a t) = do
         let v = (potentialEnergy c - aEnergy an c + potentialEnergy c' - aEnergy an c')/2
         e <- getEnergy
         let a' = a * exp (-dt * (v-e))
-        return $ Walker c' a' (t+dt)
+        let ms' = strictenList $ zipWith (+) ms $ map ((*dt) . measure c') mrs
+        return $! Walker c' a' (t+dt) $! ms'
     where moveParticle :: Double -> ((Position, Particle),[Double]) -> M (Position, Particle)
           moveParticle dt ((r, p), d) = let dt' = dt/particleMass p in (,p) <$> zipWithM (\x dx -> ((x+dt'*dx+) . (sqrt dt'*)) <$> normalVar) r d
 
+strictenList :: [a] -> [a]
+strictenList [] = []
+strictenList (x:xs) = seq x $ seq xs' $ x:xs'
+    where xs' = strictenList xs
+
 loopSteps :: M ()
 loopSteps = do
-    ps@PopState{walkerSet = ws} <- lift get
-    ws' <- stepWalkers ws
+    ps@PopState{walkerSet = ws, measurementsReqd = mrs} <- lift get
+    ws' <- stepWalkers mrs ws
     lift $ put ps{walkerSet = ws'}
 
 shiftWalkerTimes :: M ()
 shiftWalkerTimes = do
     dt <- deltaTime <$> lift get
-    let shift (Walker c a t) = (Walker c a (t-dt))
+    let shift (Walker c a t ms) = (Walker c a (t-dt) ms)
     lift $ modify (\ps -> ps{walkerSet = map shift $ walkerSet ps})
 
 doubleWalkerSet :: M ()
@@ -104,6 +116,9 @@ trimWalkerSet = lift $ do
     where halve (x:x':xs) = x:halve xs
           halve xs = xs
 
+measurementTotals :: PopulationState -> [Double]
+measurementTotals (PopState{walkerSet = ws}) = foldr1 (zipWith (+)) $ map (\(Walker{amplitude = a, measurementValues = ms}) -> map (a*) ms) ws
+
 step :: M Double
 step = do
     ps0 <- lift get
@@ -115,15 +130,15 @@ step = do
     let growthEstimate = (\x -> traceShow (-log x/deltaTime ps) x) $ traceShowId $ exp (-energy ps * deltaTime ps) * pop'/pop
     let variance' = addDataPoint growthEstimate (pop'/setPoint ps) (variance ps) -- If I want to reduce population-control bias further by keeping a separate estimate of what the actual population should be, that should be used in the weight parameter here, but it doesn't seem like population control is actually a major issue.
     let relaxationTime = traceShowId $ deltaTime ps * getTimeAtBound 0.5 variance'
-    let (averagedGrowth, randomError) = getMeanAndStddev variance'
-    let energy' = -log averagedGrowth / deltaTime ps + log (setPoint ps / pop') / relaxationTime
-    lift $ put ps{energy = energy', variance = variance' {-, dataSeries = energyEstimate : dataSeries ps-}}
+    let energy' = -log (mean variance') / deltaTime ps + log (setPoint ps / pop') / relaxationTime
+    lift $ put ps{energy = energy', variance = variance', totalTime = totalTime ps + deltaTime ps {-, dataSeries = energyEstimate : dataSeries ps-}}
     shiftWalkerTimes
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()
     if pop' > setPoint ps * 4 then trimWalkerSet else return ()
     randomSample <- (walkerSet ps !!) <$> liftRandT (pure . randomR (0,length (walkerSet ps) - 1))
     trace (showConfig $ configuration $ randomSample) $ return ()
-    return (randomError / deltaTime ps)
+    trace (unlines $ zipWith (\mr mv -> show mr ++ ": " ++ show (mv / totalTime ps / pop')) (measurementsReqd ps) (measurementTotals ps)) $ return ()
+    return (stdDev variance' / deltaTime ps)
 
 
 -- For debugging purposes. Potentially also useful for identifying excited states.

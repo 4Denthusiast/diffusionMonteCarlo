@@ -45,7 +45,7 @@ updateGraphics pop GraphicsState{gData = imageVar} = modifyMVar_ imageVar (\(img
 updateImage :: PopulationState -> Array (Int,Int) [Double] -> Array (Int,Int) [Double]
 updateImage pop img = accum (zipWith (+)) img (concatMap walkerPix (walkerSet pop))
     where (_,(w,h)) = bounds img
-          walkerPix (Walker (Conf ps) a _) = filter (inBounds . fst) $ map (\(x,t) -> (\d -> map (*(d*a/ansatzValue (Conf ps))) (particleColour t)) <$> particlePix x) ps
+          walkerPix (Walker (Conf ps) a _ _) = filter (inBounds . fst) $ map (\(x,t) -> (\d -> map (*(d*a/ansatzValue (Conf ps))) (particleColour t)) <$> particlePix x) ps
           ansatzValue = case pop of PopState{ansatz=a} -> aValue a
           particlePix p = let
                   (x,y) = particlePos p 
@@ -65,14 +65,14 @@ updateImage pop img = accum (zipWith (+)) img (concatMap walkerPix (walkerSet po
 updateGraph :: PopulationState -> Array Int [Double] -> Array Int [Double]
 updateGraph pop graph = accum (zipWith (+)) graph (concatMap walkerPix (walkerSet pop))
     where (_,l) = bounds graph
-          walkerPix (Walker (Conf ps) a _) = filter (inBounds . fst) $ concatMap (\(x,t) -> if t == Electron then [(\d -> [a/d/ansatzValue (Conf ps)]) <$> particlePix x] else []) ps
+          walkerPix (Walker (Conf ps) a _ _) = filter (inBounds . fst) $ concatMap (\(x,t) -> if t == Electron then [(\d -> [a/d/ansatzValue (Conf ps)]) <$> particlePix x] else []) ps
           ansatzValue = case pop of PopState{ansatz=a} -> aValue a
           particlePix p = let
                   x = particlePos p
                   x' = ceiling $ fromIntegral l * x
               in (x', (volume x' - volume (x'-1))/(sum (map (^2) p)**0.75))
           particlePos p = (/3) $ (+1) $ logBase 100 $ sum $ map (^2) p
-          d = fromIntegral $ confDimension $ (\(Walker c _ _:_) -> c) $ walkerSet pop
+          d = fromIntegral $ confDimension $ (\(Walker c _ _ _:_) -> c) $ walkerSet pop
           volume x = 10**(((fromIntegral x / fromIntegral l)*2-1)*d)
           inBounds x = x > 0 && x <= l
 
