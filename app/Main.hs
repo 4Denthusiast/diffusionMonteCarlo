@@ -21,8 +21,8 @@ main = do
         arguments <- getArgs
         case parseArguments arguments defaultExecutionParameters of
             Left err -> putStrLn err
-            Right (ExecutionParameters{dimension=d, atomSeps=as, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p, measurementNames = ms}) -> do
-              initialSystem <- initSystem dt w e (createAtoms d as) a ms
+            Right (ExecutionParameters{dimension=d, atomSeps=as, requiredError=e, timeStep=dt, useGraphics=ug, ansatzName=a, walkerCount=w, prepSteps = p, measurementNames = ms, measurementFade = mf}) -> do
+              initialSystem <- initSystem dt w e (createAtoms d as) a ms mf
               stabilised <- prepare p initialSystem
               mWindow <- if ug then Just <$> createWindow else return Nothing
               continue p e mWindow (resetIteration stabilised)
@@ -44,7 +44,8 @@ data ExecutionParameters = ExecutionParameters {
     ansatzName :: String,
     walkerCount :: Int,
     prepSteps :: Int,
-    measurementNames :: String
+    measurementNames :: String,
+    measurementFade :: Double
 }
 
 defaultExecutionParameters = ExecutionParameters {
@@ -56,7 +57,8 @@ defaultExecutionParameters = ExecutionParameters {
     ansatzName = "",
     walkerCount = 200,
     prepSteps = 1000,
-    measurementNames = ""
+    measurementNames = "",
+    measurementFade = 0
 }
 
 parseArguments :: [String] -> ExecutionParameters -> Either String ExecutionParameters
@@ -70,6 +72,7 @@ parseArguments (arg:args) xp = case arg of
         "-p" -> requireNumber True "-p" args (\n -> xp{prepSteps = n})
         "-a" -> requireString "-a" args (\s -> xp{ansatzName = s})
         "-m" -> requireString "-m" args (\s -> xp{measurementNames = s})
+        "-f" -> requireNumber False "-f" args (\n -> xp{measurementFade = n})
         x -> case parseAsAtomSep x of
             Nothing -> Left ("Unrecognised argument: " ++ show x)
             Just a -> parseArguments args xp{atomSeps = a:atomSeps xp}

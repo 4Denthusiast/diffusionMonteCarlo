@@ -23,11 +23,12 @@ type Position = [Double]
 
 data Configuration = Conf [(Position, Particle)] deriving Show
 
-data Measurement = MDistance | MDipole | MOne
+data Measurement = MDistance | MDipole | MPotential | MOne
 
 instance Show Measurement where
     show MDistance = "Particle separation"
     show MDipole = "Dipole moment"
+    show MPotential = "Potential energy"
     show MOne = "Constant one"
 
 data Walker = Walker {configuration :: Configuration, amplitude :: Double, localTime :: Double, measurementValues :: [Double]} deriving Show
@@ -56,7 +57,8 @@ measure (Conf ps) MDipole = sum $ map pDipole ps
     where pDipole (r,p) = particleCharge p * (head r - centre)
           centre = if length fixedParticles > 0 then (sum $ map (head . fst) fixedParticles)/fromIntegral (length fixedParticles) else (sum $ map (\(x:_,p) -> x * particleMass p) ps) / (sum $ map (particleMass . snd) ps)
           fixedParticles = filter ((== 1/0) . particleMass . snd) ps
-measure _ MOne = 1 -- For debugging
+measure x MPotential = potentialEnergy x
+measure _ MOne = 1
 
 -- Decrease the step-size when the potential energy is locally highly variable (i.e. when particles are nearby), and adapt to the desired energy error.
 suitableStepSize :: Double -> Configuration -> Double

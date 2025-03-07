@@ -27,7 +27,7 @@ emptyVariance :: Variance
 emptyVariance = Variance 0 (1/0) []
 
 addDataPoint :: Double -> Double -> Variance -> Variance
-addDataPoint x w (Variance _ _ ls) = getMeanAndStddev $ addDataPoint0 x w ls
+addDataPoint w x v@(Variance _ _ ls) = if isNaN x then v else getMeanAndStddev $ addDataPoint0 x w ls
 
 addDataPoint0 :: Double -> Double -> [Layer] -> [Layer]
 addDataPoint0 x w [] = [Layer (Just (x,w)) (x*w) (x*x*w) w]

@@ -24,7 +24,7 @@ import Control.Monad.Random
 import Control.Monad.Trans.State
 import Math.List.FFT
 
-data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, totalTime :: Double, variance :: Variance, setPoint :: Double, requiredError :: Double, dataSeries :: [Double], measurementsReqd :: [Measurement], ansatz :: a}
+data PopulationState = forall a. Ansatz a => PopState {walkerSet :: [Walker], energy :: Double, deltaTime :: Double, variance :: Variance, setPoint :: Double, requiredError :: Double, dataSeries :: [Double], measurementsReqd :: ![Measurement], measurementFade :: !Double, measureVariances :: ![Variance], ansatz :: a}
 
 population :: PopulationState -> Int
 population = length . walkerSet
@@ -32,19 +32,20 @@ population = length . walkerSet
 totalAmplitude :: PopulationState -> Double
 totalAmplitude = sum . map amplitude . walkerSet
 
-initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> String -> PopulationState
-initialPopState cs dt n e a m = case a of
+initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> String -> Double -> PopulationState
+initialPopState cs dt n e a m f = case a of
         "" -> incomplete ()
         "c3d" -> incomplete cuspsJastrow3d
         "h3d" -> incomplete hydrogenStyle3d
         "p" -> incomplete (PictureAnsatz 1)
         _ -> error ("Unrecognised ansatz name: \""++a++"\"")
     where incomplete :: forall x. Ansatz x => x -> PopulationState
-          incomplete = PopState ws 0 dt 0 emptyVariance (fromIntegral n) e [] mrs
+          incomplete = PopState ws 0 dt emptyVariance (fromIntegral n) e [] mrs f (map (const emptyVariance) m)
           ws = map (\c -> Walker c 1 0 (map (const 0) mrs)) cs
-          mrs = map (\l -> case l of
+          mrs = if null m then [] else MOne : map (\l -> case l of
                   'r' -> MDistance
                   'd' -> MDipole
+                  'v' -> MPotential
                   '1' -> MOne
               ) m
 
@@ -106,6 +107,13 @@ shiftWalkerTimes = do
     let shift (Walker c a t ms) = (Walker c a (t-dt) ms)
     lift $ modify (\ps -> ps{walkerSet = map shift $ walkerSet ps})
 
+fadeMeasurements :: M ()
+fadeMeasurements = do
+    dt <- deltaTime <$> lift get
+    mf <- measurementFade <$> lift get
+    let fade (Walker c a t ms) = Walker c a t (strictenList $ map (exp (-mf*dt)*) ms)
+    lift $ modify (\ps -> ps{walkerSet = strictenList $ map fade $ walkerSet ps})
+
 doubleWalkerSet :: M ()
 doubleWalkerSet = lift get >>= (\ps -> lift (put ps{walkerSet = walkerSet ps ++ walkerSet ps}))
 
@@ -117,7 +125,9 @@ trimWalkerSet = lift $ do
           halve xs = xs
 
 measurementTotals :: PopulationState -> [Double]
-measurementTotals (PopState{walkerSet = ws}) = foldr1 (zipWith (+)) $ map (\(Walker{amplitude = a, measurementValues = ms}) -> map (a*) ms) ws
+measurementTotals (PopState{walkerSet = ws}) = foldr1 (zipWith (+)) $ map (\(Walker{amplitude = a, measurementValues = ms}) -> map (a*) $ normalize ms) ws
+    where normalize [] = []
+          normalize (t:xs) = map (/t) xs
 
 step :: M Double
 step = do
@@ -128,16 +138,18 @@ step = do
     ps <- lift $ get
     let pop' = totalAmplitude ps
     let growthEstimate = (\x -> traceShow (-log x/deltaTime ps) x) $ traceShowId $ exp (-energy ps * deltaTime ps) * pop'/pop
-    let variance' = addDataPoint growthEstimate (pop'/setPoint ps) (variance ps) -- If I want to reduce population-control bias further by keeping a separate estimate of what the actual population should be, that should be used in the weight parameter here, but it doesn't seem like population control is actually a major issue.
+    let variance' = addDataPoint (pop'/setPoint ps) growthEstimate (variance ps) -- If I want to reduce population-control bias further by keeping a separate estimate of what the actual population should be, that should be used in the weight parameter here, but it doesn't seem like population control is actually a major issue.
+    let mVariances' = strictenList $ zipWith (addDataPoint (pop'/setPoint ps)) (map (/pop') $ measurementTotals ps) (measureVariances ps)
     let relaxationTime = traceShowId $ deltaTime ps * getTimeAtBound 0.5 variance'
     let energy' = -log (mean variance') / deltaTime ps + log (setPoint ps / pop') / relaxationTime
-    lift $ put ps{energy = energy', variance = variance', totalTime = totalTime ps + deltaTime ps {-, dataSeries = energyEstimate : dataSeries ps-}}
+    lift $ put ps{energy = energy', variance = variance', measureVariances = mVariances' {-, dataSeries = energyEstimate : dataSeries ps-}}
     shiftWalkerTimes
+    fadeMeasurements
     if pop' < setPoint ps / 4 then doubleWalkerSet else return ()
     if pop' > setPoint ps * 4 then trimWalkerSet else return ()
     randomSample <- (walkerSet ps !!) <$> liftRandT (pure . randomR (0,length (walkerSet ps) - 1))
     trace (showConfig $ configuration $ randomSample) $ return ()
-    trace (unlines $ zipWith (\mr mv -> show mr ++ ": " ++ show (mv / totalTime ps / pop')) (measurementsReqd ps) (measurementTotals ps)) $ return ()
+    if null (measurementsReqd ps) then return () else trace (unlines $ zipWith (\mr mv -> show mr ++ ": " ++ show (mean mv) ++ " +- " ++ show (stdDev mv)) (tail $ measurementsReqd ps) mVariances') $ return ()
     return (stdDev variance' / deltaTime ps)
 
 
