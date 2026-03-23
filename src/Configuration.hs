@@ -13,6 +13,7 @@ module Configuration (
 ) where
 
 import Particle
+import BesselK
 
 import Data.List
 import Debug.Trace
@@ -40,9 +41,9 @@ potentialEnergy :: Configuration -> Double
 potentialEnergy c@(Conf ps) = sum $ concat $ zipWith (\p t -> map (pairEnergy p) t) ps (tail $ tails ps)
     where pairEnergy (r0,p0) (r1,p1) = coulumb (dist r0 r1) * case (p0,p1) of
               (Electron,Electron) -> 1
-              (Nucleus q q' _,Electron) -> q'*exp(-dist r0 r1)-q
-              (Electron,Nucleus q q' _) -> q'*exp(-dist r0 r1)-q
-              (Nucleus q1 q'1 _,Nucleus q2 q'2 _) -> q1*q2 - sChargeRatio*q'1*q'2*exp(-dist r0 r1)
+              (Nucleus q q' _,Electron) -> q'*besselK1x(dist r0 r1)-q
+              (Electron,Nucleus q q' _) -> q'*besselK1x(dist r0 r1)-q
+              (Nucleus q1 q'1 _,Nucleus q2 q'2 _) -> q1*q2 - sChargeRatio*q'1*q'2*besselK1x(dist r0 r1)
           d = confDimension c
           coulumb = case d of
               2 -> negate . log
