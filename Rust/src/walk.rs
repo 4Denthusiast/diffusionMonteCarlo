@@ -177,12 +177,3 @@ pub fn step<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mut R)
   }
   pop
 }
-
-pub fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &mut R) {
-  for (v, m) in zip(&pop.measurement_variances, &ctx.measurements_required) {
-    println!("{}: {:.5e} ± {:.2e}", m, v.mean, v.std_dev);
-  }
-  let config_index = rng.random_range(0..pop.walker_set.len());
-  let random_configuration = &pop.positions[(config_index * ctx.molecule.len())..((config_index+1) * ctx.molecule.len())];
-  println!("pop: {}, pop(w): {:.1}, energy: {:.5e} ± {:.2e}\n{}", pop.population(), pop.total_amplitude(), pop.energy(ctx), pop.energy_std_dev(ctx), show_config(random_configuration));
-}

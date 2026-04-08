@@ -13,6 +13,9 @@ use crate::variance::*;
 use crate::walk::*;
 
 use std::env;
+use std::io::{stdout, Stdout, Write};
+use std::iter::zip;
+use crossterm::{self, QueueableCommand, terminal::ClearType};
 use rand::{self, RngExt, rngs::SmallRng};
 use regex::Regex;
 
@@ -23,15 +26,24 @@ enum AtomSep {
   Offset {mean : f64, std_dev : f64},
 }
 
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+enum Verbosity {
+  Quiet,
+  Normal,
+  Verbose,
+}
+
 struct ExecutionParameters {
   dimension : u8,
   atom_seps : Vec<AtomSep>,
+  molecule_name : String,
   required_error : f64,
   time_step : f64,
   walker_count : usize,
   prep_steps : u32,
   measurements : Vec<Measurement>,
   measurement_fade : f64,
+  verbosity : Verbosity,
 }
 
 impl Default for ExecutionParameters {
@@ -39,12 +51,14 @@ impl Default for ExecutionParameters {
     ExecutionParameters {
       dimension : 3,
       atom_seps : vec![],
+      molecule_name : String::from(""),
       required_error : 0.01,
       time_step : 0.05,
       walker_count : 200,
       prep_steps : 1000,
       measurements : vec![],
       measurement_fade : 0.0,
+      verbosity : Verbosity::Normal,
    }
  }
 }
@@ -64,15 +78,31 @@ fn main() {
   };
   let configurations = (0..params.walker_count).map(|_| make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
   let mut population_state = initial_pop_state(&configurations, &ctx);
+  let mut out = stdout();
+  if params.verbosity < Verbosity::Verbose {
+    out.queue(crossterm::cursor::SavePosition).unwrap();
+  }
+  let mut n_temp_lines : u16 = 0;
   for i in 0..params.prep_steps {
-    println!("Preparing...{}/{}", i, params.prep_steps);
     population_state = step(population_state, &ctx, &mut rng);
-    display_popstate(&population_state, &ctx, &mut rng);
+    display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
+    if params.verbosity >= Verbosity::Normal {
+      out.write_all(format!("Preparing...{}/{}\n", i, params.prep_steps).as_bytes()).unwrap();
+      n_temp_lines += 1;
+    }
   }
   reset_iteration(&mut population_state);
   while population_state.energy_std_dev(&ctx) > params.required_error {
     population_state = step(population_state, &ctx, &mut rng);
-    display_popstate(&population_state, &ctx, &mut rng);
+    display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
+  }
+  if params.verbosity == Verbosity::Quiet {
+    out.write_all(params.molecule_name.as_bytes()).unwrap();
+    out.write_all(": ".as_bytes()).unwrap();
+    for v in &population_state.measurement_variances {
+      out.write_all(format!("{:.5e} ± {:.2e}, ", v.mean, v.std_dev).as_bytes()).unwrap();
+    }
+    out.write_all(format!("{:.5e} ± {:.2e}\n", population_state.energy(&ctx), population_state.energy_std_dev(&ctx)).as_bytes()).unwrap();
   }
 }
 
@@ -89,7 +119,15 @@ fn parse_arguments() -> ExecutionParameters {
       "-p" => params.prep_steps       = args.next().expect("missing argument after -p").parse().expect("couldn't understand -p argument"),
       "-f" => params.measurement_fade = args.next().expect("missing argument after -f").parse().expect("couldn't understand -f argument"),
       "-m" => params.measurements     = args.next().expect("missing argument after -m").chars().map(Measurement::from_char).collect(),
-      arg => params.atom_seps.push(parse_atom_sep(arg).expect(&format!("couldn't understand argument \"{}\"", &arg[..]))),
+      "--verbose" => params.verbosity = Verbosity::Verbose,
+      "--quiet" => params.verbosity = Verbosity::Quiet,
+      arg => {
+        params.atom_seps.push(parse_atom_sep(arg).expect(&format!("couldn't understand argument \"{}\"", &arg[..])));
+        if params.molecule_name.len() > 0 {
+          params.molecule_name.push(' ');
+        }
+        params.molecule_name.push_str(arg)
+      },
     };
   }
   if params.atom_seps.len() == 0 {
@@ -176,4 +214,28 @@ fn reset_iteration(population_state : &mut PopulationState) {
   for walker in &mut population_state.walker_set {
     walker.measurement_values = [0.0; MEASUREMENT_COUNT];
   }
+}
+
+fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &mut R, verbosity : Verbosity, out : &mut Stdout, n_temp_lines : &mut u16) {
+  if verbosity <= Verbosity::Quiet {
+    return;
+  }
+  if verbosity < Verbosity::Verbose {
+    out.queue(crossterm::cursor::MoveToPreviousLine(*n_temp_lines)).unwrap();
+    out.queue(crossterm::terminal::Clear(ClearType::FromCursorDown)).unwrap();
+    *n_temp_lines = 0;
+  }
+  for (v, m) in zip(&pop.measurement_variances, &ctx.measurements_required) {
+    out.write_all(format!("{}: {:.5e} ± {:.2e}\n", m, v.mean, v.std_dev).as_bytes()).unwrap();
+    *n_temp_lines += 1;
+  }
+  let config_index = rng.random_range(0..pop.walker_set.len());
+  let random_configuration = &pop.positions[(config_index * ctx.molecule.len())..((config_index+1) * ctx.molecule.len())];
+  out.write_all(format!("pop: {}, pop(w): {:.1}, energy: {:.5e} ± {:.2e}\n", pop.population(), pop.total_amplitude(), pop.energy(ctx), pop.energy_std_dev(ctx)).as_bytes()).unwrap();
+    *n_temp_lines += 1;
+  if verbosity >= Verbosity::Verbose {
+    out.write_all(show_config(random_configuration).as_bytes()).unwrap();
+    *n_temp_lines += random_configuration.len() as u16;
+  }
+  out.flush().unwrap();
 }
