@@ -20,7 +20,7 @@ use rand::{self, RngExt, rngs::SmallRng};
 use regex::Regex;
 
 enum AtomSep {
-  Atom {z : u32, a : u32, m : f64, q : i32},
+  Atom {z : u32, zf : f64, a : u32, m : f64, q : i32},
   Fixed (f64),
   Random (f64),
   Offset {mean : f64, std_dev : f64},
@@ -131,7 +131,8 @@ fn parse_arguments() -> ExecutionParameters {
     };
   }
   if params.atom_seps.len() == 0 {
-    params.atom_seps.push(AtomSep::Atom{z:1,a:1,m:f64::INFINITY,q:0});
+    params.atom_seps.push(AtomSep::Atom{z:1,zf:0.0,a:1,m:f64::INFINITY,q:0});
+    params.molecule_name = String::from("H");
   }
   params
 }
@@ -151,24 +152,33 @@ fn parse_atom_sep(s : &str) -> Option<AtomSep> {
       }
     }
   }
-  let regex_matches = Regex::new(r"^([[:alpha:]]*)(\d+)?(?:m([0-9\\.]+))?([\+\-]*)$").unwrap().captures(s)?;
+  let regex_matches = Regex::new(r"^(n|H|He|Li|Be)([#♯b♭]?)(\d+)?(?:m([0-9\\.]+))?([\+\-]*)$").unwrap().captures(s)?;
   let z = match &regex_matches[1] {
+    "n" => Some(0),
     "H" => Some(1),
     "He" => Some(2),
     "Li" => Some(3),
     "Be" => Some(4),
     _ => None,
   }?;
-  let a = match regex_matches.get(2) {
-    None => if z == 1 {1} else {2*z},
+  let zf = match &regex_matches[2] {
+    "#" => 1.0/3.0,
+    "♯" => 1.0/3.0,
+    "b" => -1.0/3.0,
+    "♭" => -1.0/3.0,
+    "" => 0.0,
+    _ => unreachable!(),
+  };
+  let a = match regex_matches.get(3) {
+    None => if z <= 1 {1} else {2*z},
     Some(a_s) => a_s.as_str().parse::<u32>().ok()?,
   };
-  let m = match regex_matches.get(3) {
+  let m = match regex_matches.get(4) {
     None => f64::INFINITY,
     Some(ms) => ms.as_str().parse::<f64>().ok()?,
   };
-  let q = regex_matches[4].matches('+').collect::<Vec<_>>().len() as i32 * 2 - regex_matches[4].len() as i32;
-  Some(AtomSep::Atom{z,a,m,q})
+  let q = regex_matches[5].matches('+').collect::<Vec<_>>().len() as i32 * 2 - regex_matches[5].len() as i32;
+  Some(AtomSep::Atom{z,zf,a,m,q})
 }
 
 fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &mut R) -> Vec<(Particle,Position)> {
@@ -190,11 +200,11 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
         position = random_position(position, *std_dev, dimension, rng);
         position.x += mean;
       }
-      AtomSep::Atom{z,a,m,q} => {
+      AtomSep::Atom{z,zf,a,m,q} => {
         if !had_sep {
           position.x += 1.0;
         }
-        molecule.push((Particle::Nucleus{z:*z as f64, a:*a as f64, m:*m}, position));
+        molecule.push((Particle::Nucleus{z:*z as f64 + *zf, a:*a as f64, m:*m}, position));
         for _ in 0..(*z as i32 - q) {
           molecule.push((Particle::Electron, random_position(position, 4.0, dimension, rng)));
         }
@@ -220,7 +230,7 @@ fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &m
   if verbosity <= Verbosity::Quiet {
     return;
   }
-  if verbosity < Verbosity::Verbose {
+  if verbosity < Verbosity::Verbose && *n_temp_lines > 0{
     out.queue(crossterm::cursor::MoveToPreviousLine(*n_temp_lines)).unwrap();
     out.queue(crossterm::terminal::Clear(ClearType::FromCursorDown)).unwrap();
     *n_temp_lines = 0;
@@ -235,6 +245,7 @@ fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &m
     *n_temp_lines += 1;
   if verbosity >= Verbosity::Verbose {
     out.write_all(show_config(random_configuration).as_bytes()).unwrap();
+    out.write_all("\n".as_bytes()).unwrap();
     *n_temp_lines += random_configuration.len() as u16;
   }
   out.flush().unwrap();
