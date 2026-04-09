@@ -149,7 +149,7 @@ fn measurement_totals(pop : &PopulationState, ctx : &Context) -> Vec<f64> {
   for walker in &pop.walker_set {
     let norm = walker.measurement_values[0]; // Fixed as Measurement::One
     for i in 0..result.len() {
-      result[i] += walker.measurement_values[i+1] / norm;
+      result[i] += walker.amplitude * walker.measurement_values[i+1] / norm;
     }
   }
   result
