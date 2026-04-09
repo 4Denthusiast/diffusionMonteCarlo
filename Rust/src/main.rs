@@ -233,8 +233,8 @@ fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &m
   if verbosity < Verbosity::Verbose && *n_temp_lines > 0{
     out.queue(crossterm::cursor::MoveToPreviousLine(*n_temp_lines)).unwrap();
     out.queue(crossterm::terminal::Clear(ClearType::FromCursorDown)).unwrap();
-    *n_temp_lines = 0;
   }
+  *n_temp_lines = 0;
   for (v, m) in zip(&pop.measurement_variances, &ctx.measurements_required) {
     out.write_all(format!("{}: {:.5e} ± {:.2e}\n", m, v.mean, v.std_dev).as_bytes()).unwrap();
     *n_temp_lines += 1;
