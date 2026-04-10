@@ -12,6 +12,7 @@ pub struct Walker {
   pub amplitude: f64,
   pub local_time: f64,
   pub measurement_values: [f64; MEASUREMENT_COUNT],
+  prev_potential: f64,
 }
 
 pub struct Context<'a> {
@@ -57,6 +58,7 @@ pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context) -> 
         amplitude: 1.0,
         local_time: 0.0,
         measurement_values: [0.0; MEASUREMENT_COUNT],
+        prev_potential: 0.0, // This is kind of incorrect, but it doesn't matter to the final result.
       };
       positions.len()
     ],
@@ -78,7 +80,6 @@ pub fn random_position<R : RngExt>(start : Position, stddev : f64, dimension : u
 }
 
 fn step_walkers<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState {
-  // TODO: don't allocate new vectors every time.
   let old_walker_set = pop.walker_set;
   let old_positions = pop.positions;
   // Benchmarking shows that the performance impact of allocating these anew each time (as opposed to keeping and recycling them) is unmeasurably small.
@@ -109,14 +110,16 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, pop 
     stack.truncate(stack.len() - n_particles);
   } else {
     // move walker
-    let old_v = potential_energy(&configuration, ctx);
     let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
     for (r, p) in zip(&mut *configuration, ctx.molecule) {
       // TODO: check if omitting infinite-mass particles entirely speeds this step up much.
-      *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
+      if particle_mass(p).is_finite() {
+        *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
+      }
     }
-    let v = (potential_energy(&configuration, ctx) + old_v)/2.0;
-    walker.amplitude *= (-dt * (v - pop.energy)).exp();
+    let v = potential_energy(&configuration, ctx);
+    walker.amplitude *= (-dt * ((v + walker.prev_potential)/2.0 - pop.energy)).exp();
+    walker.prev_potential = v;
     walker.local_time += dt;
     for (mv, m) in zip(&mut walker.measurement_values, iter::once(&Measurement::One).chain(&ctx.measurements_required)) {
       *mv += dt * m.measure(&configuration, ctx); // TODO: consider using the average of new_configuration and old_configuration or something.
