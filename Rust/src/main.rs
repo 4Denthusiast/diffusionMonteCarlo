@@ -15,10 +15,12 @@ use crate::walk::*;
 use std::env;
 use std::io::{stdout, Stdout, Write};
 use std::iter::zip;
+use std::time::Instant;
 use crossterm::{self, QueueableCommand, terminal::ClearType};
 use rand::{self, RngExt, rngs::SmallRng};
 use regex::Regex;
 
+#[derive(PartialEq)]
 enum AtomSep {
   Atom {z : u32, zf : f64, a : u32, m : f64, q : i32},
   Fixed (f64),
@@ -28,11 +30,13 @@ enum AtomSep {
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Verbosity {
+  Benchmark,
   Quiet,
   Normal,
   Verbose,
 }
 
+#[derive(PartialEq)]
 struct ExecutionParameters {
   dimension : u8,
   atom_seps : Vec<AtomSep>,
@@ -52,20 +56,36 @@ impl Default for ExecutionParameters {
       dimension : 3,
       atom_seps : vec![],
       molecule_name : String::from(""),
-      required_error : 0.01,
+      required_error : 0.001,
       time_step : 0.05,
-      walker_count : 200,
+      walker_count : 1000,
       prep_steps : 1000,
       measurements : vec![],
       measurement_fade : 0.0,
       verbosity : Verbosity::Normal,
-   }
- }
+    }
+  }
+}
+
+fn benchmark_parameters() -> ExecutionParameters {
+  ExecutionParameters {
+    atom_seps : vec![
+      AtomSep::Atom{z:1, zf:0.0, a:1, m:f64::INFINITY, q:0},
+      AtomSep::Fixed(1.4),
+      AtomSep::Atom{z:1, zf:0.0, a:1, m:1800.0, q:0},
+    ],
+    time_step : 1.0,
+    prep_steps : 1000,
+    measurements : vec![Measurement::Distance, Measurement::Potential],
+    verbosity : Verbosity::Benchmark,
+    ..ExecutionParameters::default()
+  }
 }
 
 fn main() {
   let mut rng : SmallRng = rand::make_rng();
   let params = parse_arguments();
+  let start_time = Instant::now();
   let molecule : Vec<Particle> = make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(p,_)| p).collect();
   let ctx = Context {
     dimension : params.dimension,
@@ -90,6 +110,11 @@ fn main() {
       out.write_all(format!("Preparing...{}/{}\n", i, params.prep_steps).as_bytes()).unwrap();
       n_temp_lines += 1;
     }
+  }
+  if params.verbosity == Verbosity::Benchmark {
+    // This result is somewhat random, which isn't great for a benchmark. However, removing the randomness would give a false sense of security because it's possible for changes being benchmarked to alter how the fixed sequence of samples is used, thereby switching to, essentially, a new random sample. At least this way, you can run it a few times and get an idea what the variance is.
+    println!("time: {:?}", start_time.elapsed());
+    return;
   }
   reset_iteration(&mut population_state);
   while population_state.energy_std_dev(&ctx) > params.required_error {
@@ -121,6 +146,12 @@ fn parse_arguments() -> ExecutionParameters {
       "-m" => params.measurements     = args.next().expect("missing argument after -m").chars().map(Measurement::from_char).collect(),
       "--verbose" => params.verbosity = Verbosity::Verbose,
       "--quiet" => params.verbosity = Verbosity::Quiet,
+      "--benchmark" => {
+        if params != ExecutionParameters::default() {
+          println!("Warning: --benchmark option will cause all earlier parameters to be ignored.");
+        }
+        params = benchmark_parameters();
+      },
       arg => {
         params.atom_seps.push(parse_atom_sep(arg).expect(&format!("couldn't understand argument \"{}\"", &arg[..])));
         if params.molecule_name.len() > 0 {

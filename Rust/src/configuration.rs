@@ -27,6 +27,7 @@ impl Default for Position {
   }
 }
 
+#[derive(PartialEq)]
 pub enum Measurement {
   Distance,
   Dipole,
