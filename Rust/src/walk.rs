@@ -81,38 +81,45 @@ fn step_walkers<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mu
   // TODO: don't allocate new vectors every time.
   let old_walker_set = pop.walker_set;
   let old_positions = pop.positions;
+  // Benchmarking shows that the performance impact of allocating these anew each time (as opposed to keeping and recycling them) is unmeasurably small.
   pop.walker_set = Vec::new();
   pop.positions = Vec::new();
+  let mut configuration_stack = Vec::new();
   for (walker, configuration) in zip(
     old_walker_set.iter(),
     old_positions.as_slice().chunks_exact(ctx.molecule.len())
   ) {
-    step_walker(*walker, configuration, &mut pop, ctx, rng, 0);
+    configuration_stack.extend_from_slice(configuration);
+    step_walker(*walker, &mut configuration_stack, &mut pop, ctx, rng, 0);
   }
   pop
 }
 
-fn step_walker<R : RngExt>(mut walker : Walker, configuration : &[Position], pop : &mut PopulationState, ctx : &Context, rng : &mut R, depth : u32) {
+fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, pop : &mut PopulationState, ctx : &Context, rng : &mut R, depth : u32) {
+  let n_particles = ctx.molecule.len();
+  let config_range = (stack.len()-n_particles)..stack.len();
+  let configuration = &mut stack[config_range.clone()];
   if walker.local_time >= 0.0 {
     walker.local_time -= ctx.delta_time;
     for mv in &mut walker.measurement_values {
       *mv *= (-ctx.delta_time * ctx.measurement_fade).exp();
     }
     pop.walker_set.push(walker);
-    pop.positions.extend(configuration);
+    pop.positions.extend_from_slice(&configuration);
+    stack.truncate(stack.len() - n_particles);
   } else {
     // move walker
-    let mut new_configuration = configuration.to_vec(); // TODO: get rid of this allocation.
-    let dt = suitable_step_size(configuration, ctx).min(-walker.local_time);
-    for (r, p) in zip(&mut new_configuration, ctx.molecule) {
+    let old_v = potential_energy(&configuration, ctx);
+    let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
+    for (r, p) in zip(&mut *configuration, ctx.molecule) {
       // TODO: check if omitting infinite-mass particles entirely speeds this step up much.
       *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
     }
-    let v = (potential_energy(new_configuration.as_slice(), ctx) + potential_energy(configuration, ctx))/2.0;
+    let v = (potential_energy(&configuration, ctx) + old_v)/2.0;
     walker.amplitude *= (-dt * (v - pop.energy)).exp();
     walker.local_time += dt;
     for (mv, m) in zip(&mut walker.measurement_values, iter::once(&Measurement::One).chain(&ctx.measurements_required)) {
-      *mv += dt * m.measure(&new_configuration[..], ctx); // TODO: consider using the average of new_configuration and old_configuration or something.
+      *mv += dt * m.measure(&configuration, ctx); // TODO: consider using the average of new_configuration and old_configuration or something.
     }
     
     // split walker
@@ -121,15 +128,19 @@ fn step_walker<R : RngExt>(mut walker : Walker, configuration : &[Position], pop
       if rng.random_bool(walker.amplitude) {
         walker.amplitude = 1.0;
       } else {
+        stack.truncate(stack.len() - n_particles);
         return; // delete the walker.
       }
     }
-    let split_into = if walker.amplitude > 2.0 { 2 } else { 1 };
+    let split_into = if walker.amplitude > 2.0 {
+      stack.extend_from_within(config_range.clone());
+      2
+    } else { 1 };
     walker.amplitude /= split_into as f64;
     
     // recurse
     for _ in 0..split_into {
-      step_walker(walker, new_configuration.as_slice(), pop, ctx, rng, depth + 1);
+      step_walker(walker, stack, pop, ctx, rng, depth + 1);
     }
   }
 }
