@@ -35,6 +35,7 @@ totalAmplitude = sum . map amplitude . walkerSet
 initialPopState :: [Configuration] -> Double -> Int -> Double -> String -> String -> Double -> PopulationState
 initialPopState cs dt n e a m f = case a of
         "" -> incomplete ()
+        "sin" -> incomplete SineTestAnsatz
         "c3d" -> incomplete cuspsJastrow3d
         "h3d" -> incomplete hydrogenStyle3d
         "p" -> incomplete (PictureAnsatz 1)

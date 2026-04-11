@@ -1,5 +1,6 @@
 module Ansatz (
     Ansatz(..),
+    SineTestAnsatz(..),
     JastrowAnsatz(..),
     cuspsJastrow3d,
     hydrogenStyle3d,
@@ -26,6 +27,15 @@ instance Ansatz () where
     aValue () _ = 1
     drift () (Conf ps) = map (\_ -> replicate (confDimension (Conf ps)) 0) ps
     aEnergy () _ = 0
+
+-- Just something very easy to calculate the derivatives of, to make sure the ansatz system in general is working because I'm getting incorrect answers from the other ansatzes.
+data SineTestAnsatz = SineTestAnsatz
+
+instance Ansatz SineTestAnsatz where
+    aValue _ (Conf (_:(x:_,_):_)) = sin x + 2
+    drift _ (Conf ((x0,_):(x10:x1s,_):ps)) = zeroes : (cos x10/(sin x10 + 2) : tail zeroes) : map (const zeroes) ps
+      where zeroes = map (const 0) x0
+    aEnergy _ (Conf (_:(x:_,p):_)) = -sin x / (2 * particleMass p * (sin x + 2))
 
 -- Jastrow f has value exp(Σ_p1 Σ_p2 fst f(p1,p2,d(p1,p2))). The second and third components of f's result are the first and second derivatives of (fst . f p1 f2).
 data JastrowAnsatz = Jastrow (Particle -> Particle -> Double -> (Double, Double, Double))
