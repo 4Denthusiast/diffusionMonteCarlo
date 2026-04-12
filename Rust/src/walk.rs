@@ -2,10 +2,13 @@ use crate::particle::*;
 use crate::configuration::*;
 use crate::variance::*;
 
-use rand::{self, RngExt};
+use rand::{self, RngExt, SeedableRng};
 use rand_distr::{self, Distribution};
 use std::iter;
 use std::iter::zip;
+use std::marker::Send;
+use std::sync::{mpsc, Mutex, Arc};
+use std::thread;
 
 #[derive(Copy, Clone)]
 pub struct Walker {
@@ -23,11 +26,19 @@ pub struct Context<'a> {
   pub required_error: f64,
   pub measurements_required: Vec<Measurement>,
   pub measurement_fade: f64,
+  pub thread_count: usize,
 }
 
+#[derive(Clone)]
+struct PopChunk {
+  walker_set: Vec<Walker>,
+  positions: Vec<Position>,
+}
+
+const CHUNK_SIZE : usize = 100;
+
 pub struct PopulationState {
-  pub walker_set: Vec<Walker>,
-  pub positions: Vec<Position>,
+  chunks: Vec<PopChunk>,
   pub energy: f64, // includes an adjustment term to shift the population back towards the set point
   pub variance: Variance,
   pub measurement_variances: Vec<Variance>,
@@ -35,11 +46,11 @@ pub struct PopulationState {
 
 impl PopulationState {
   pub fn population(&self) -> u32 {
-    self.walker_set.len() as u32
+    self.chunks.iter().map(|c| c.walker_set.len() as u32).sum()
   }
 
   pub fn total_amplitude(&self) -> f64 {
-    self.walker_set.iter().map(|w| w.amplitude).sum()
+    self.chunks.iter().map(|c| c.walker_set.iter().map(|w| w.amplitude).sum::<f64>()).sum()
   }
 
   pub fn energy(&self, ctx : &Context) -> f64 {
@@ -49,20 +60,28 @@ impl PopulationState {
   pub fn energy_std_dev(&self, ctx : &Context) -> f64 {
     self.variance.std_dev / ctx.delta_time
   }
+  
+  pub fn random_configuration<R : RngExt>(&self, ctx : &Context, rng : &mut R) -> &[Position] {
+    let chunk = &self.chunks[rng.random_range(0..self.chunks.len())];
+    let config_index = rng.random_range(0..chunk.walker_set.len());
+    &chunk.positions[(config_index * ctx.molecule.len())..((config_index+1) * ctx.molecule.len())]
+  }
 }
 
 pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context) -> PopulationState {
   let n_measurements = context.measurements_required.len();
   PopulationState {
-    walker_set: vec![ Walker {
-        amplitude: 1.0,
-        local_time: 0.0,
-        measurement_values: [0.0; MEASUREMENT_COUNT],
-        prev_potential: 0.0, // This is kind of incorrect, but it doesn't matter to the final result.
-      };
-      positions.len()
-    ],
-    positions: positions.iter().flatten().map(|p| p.clone()).collect(),
+    chunks: positions.chunks(CHUNK_SIZE).map(|ps| PopChunk {
+      walker_set: vec![ Walker {
+          amplitude: 1.0,
+          local_time: 0.0,
+          measurement_values: [0.0; MEASUREMENT_COUNT],
+          prev_potential: 0.0, // This is kind of incorrect, but it doesn't matter to the final result.
+        };
+        ps.len()
+      ],
+      positions: ps.iter().flatten().map(|p| p.clone()).collect(),
+    }).collect(),
     energy: 0.0,
     variance: Variance::empty(),
     measurement_variances: vec![Variance::empty(); n_measurements],
@@ -79,24 +98,44 @@ pub fn random_position<R : RngExt>(start : Position, stddev : f64, dimension : u
   }
 }
 
-fn step_walkers<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState {
-  let old_walker_set = pop.walker_set;
-  let old_positions = pop.positions;
-  // Benchmarking shows that the performance impact of allocating these anew each time (as opposed to keeping and recycling them) is unmeasurably small.
-  pop.walker_set = Vec::new();
-  pop.positions = Vec::new();
-  let mut configuration_stack = Vec::new();
-  for (walker, configuration) in zip(
-    old_walker_set.iter(),
-    old_positions.as_slice().chunks_exact(ctx.molecule.len())
-  ) {
-    configuration_stack.extend_from_slice(configuration);
-    step_walker(*walker, &mut configuration_stack, &mut pop, ctx, rng, 0);
-  }
+fn step_walkers<R : RngExt + SeedableRng + Send>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState {
+  let work_queue = Arc::new(Mutex::new(pop.chunks));
+  let (in_send, in_rcv) = mpsc::channel();
+  thread::scope(|scope| {
+    for _ in 0..ctx.thread_count {
+      let thread_rcv = work_queue.clone();
+      let thread_send = in_send.clone();
+      let mut thread_rng = rng.fork();
+      scope.spawn(move || {
+        let mut configuration_stack = Vec::new();
+        loop {
+          let mut mutex_guard = thread_rcv.lock().unwrap();
+          let Some(chunk) = mutex_guard.pop() else {
+            return;
+          };
+          drop(mutex_guard);
+          let mut new_chunk = PopChunk {
+            walker_set : vec![],
+            positions : vec![],
+          };
+          for (walker, configuration) in zip(
+            chunk.walker_set.iter(),
+            chunk.positions.as_slice().chunks_exact(ctx.molecule.len())
+          ) {
+            configuration_stack.extend_from_slice(configuration);
+            step_walker(*walker, &mut configuration_stack, &mut new_chunk, pop.energy, ctx, &mut thread_rng, 0);
+          }
+          thread_send.send(new_chunk).unwrap();
+        }
+      });
+    }
+  });
+  drop(in_send);
+  pop.chunks = rebalance_chunks(in_rcv.iter(), ctx);
   pop
 }
 
-fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, pop : &mut PopulationState, ctx : &Context, rng : &mut R, depth : u32) {
+fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, out_chunk : &mut PopChunk, energy : f64, ctx : &Context, rng : &mut R, depth : u32) {
   let n_particles = ctx.molecule.len();
   let config_range = (stack.len()-n_particles)..stack.len();
   let configuration = &mut stack[config_range.clone()];
@@ -105,20 +144,19 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, pop 
     for mv in &mut walker.measurement_values {
       *mv *= (-ctx.delta_time * ctx.measurement_fade).exp();
     }
-    pop.walker_set.push(walker);
-    pop.positions.extend_from_slice(&configuration);
+    out_chunk.walker_set.push(walker);
+    out_chunk.positions.extend_from_slice(&configuration);
     stack.truncate(stack.len() - n_particles);
   } else {
     // move walker
     let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
     for (r, p) in zip(&mut *configuration, ctx.molecule) {
-      // TODO: check if omitting infinite-mass particles entirely speeds this step up much.
       if particle_mass(p).is_finite() {
         *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
       }
     }
     let v = potential_energy(&configuration, ctx);
-    walker.amplitude *= (-dt * ((v + walker.prev_potential)/2.0 - pop.energy)).exp();
+    walker.amplitude *= (-dt * ((v + walker.prev_potential)/2.0 - energy)).exp();
     walker.prev_potential = v;
     walker.local_time += dt;
     for (mv, m) in zip(&mut walker.measurement_values, iter::once(&Measurement::One).chain(&ctx.measurements_required)) {
@@ -143,33 +181,65 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, pop 
     
     // recurse
     for _ in 0..split_into {
-      step_walker(walker, stack, pop, ctx, rng, depth + 1);
+      step_walker(walker, stack, out_chunk, energy, ctx, rng, depth + 1);
     }
   }
 }
 
-fn double_walker_set(pop : &mut PopulationState) {
-  pop.walker_set.extend_from_within(..);
-  pop.positions.extend_from_within(..);
+fn rebalance_chunks(iter : impl Iterator<Item = PopChunk>, ctx : &Context) -> Vec<PopChunk> {
+  let mut short_chunk = None;
+  let mut result = vec![];
+  for mut chunk in iter {
+    if chunk.walker_set.len() < CHUNK_SIZE / 2 {
+      match short_chunk {
+        None => short_chunk = Some(chunk),
+        Some(other) => {
+          short_chunk = None;
+          chunk.walker_set.extend(other.walker_set);
+          chunk.positions.extend(other.positions);
+          result.push(chunk);
+        }
+      }
+    } else if chunk.walker_set.len() > CHUNK_SIZE * 2 {
+      let other = PopChunk {
+        walker_set : chunk.walker_set.drain(CHUNK_SIZE..).collect(),
+        positions  : chunk.positions.drain((CHUNK_SIZE * ctx.molecule.len())..).collect(),
+      };
+      result.push(chunk);
+      result.push(other);
+    } else {
+      result.push(chunk);
+    }
+  }
+  match short_chunk {
+    None => (),
+    Some(chunk) => result.push(chunk),
+  };
+  result
 }
 
-fn trim_walker_set(pop : &mut PopulationState, ctx : &Context) {
-  pop.walker_set.truncate(pop.walker_set.len()/2);
-  pop.positions.truncate(pop.walker_set.len() * ctx.molecule.len());
+fn double_walker_set(pop : &mut PopulationState) {
+  pop.chunks.extend_from_within(..);
+}
+
+fn trim_walker_set(pop : &mut PopulationState) {
+  pop.chunks.truncate((pop.chunks.len()+1)/2); // +1 so that in the unlikely case that there's only one chunk, it isn't deleted.
 }
 
 fn measurement_totals(pop : &PopulationState, ctx : &Context) -> Vec<f64> {
   let mut result = vec![0.0; ctx.measurements_required.len()];
-  for walker in &pop.walker_set {
-    let norm = walker.measurement_values[0]; // Fixed as Measurement::One
-    for i in 0..result.len() {
-      result[i] += walker.amplitude * walker.measurement_values[i+1] / norm;
+  for chunk in &pop.chunks {
+    for walker in &chunk.walker_set {
+      let norm = walker.measurement_values[0]; // Fixed as Measurement::One
+      for i in 0..result.len() {
+        result[i] += walker.amplitude * walker.measurement_values[i+1] / norm;
+      }
     }
   }
   result
 }
 
-pub fn step<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState{
+pub fn step<R : RngExt + SeedableRng + Send>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState{
   let start_pop = pop.total_amplitude();
   if start_pop == 0.0 {
     panic!("Sample population extinct.");
@@ -187,7 +257,19 @@ pub fn step<R : RngExt>(mut pop : PopulationState, ctx : &Context, rng : &mut R)
   if end_pop < ctx.set_point / 4.0 {
     double_walker_set(&mut pop);
   } else if end_pop > ctx.set_point * 4.0 {
-    trim_walker_set(&mut pop, ctx);
+    trim_walker_set(&mut pop);
   }
   pop
+}
+
+pub fn reset_iteration(population_state : &mut PopulationState) {
+  population_state.variance = Variance::empty();
+  for measurement in &mut population_state.measurement_variances {
+    *measurement = Variance::empty();
+  }
+  for chunk in &mut population_state.chunks {
+    for walker in &mut chunk.walker_set {
+      walker.measurement_values = [0.0; MEASUREMENT_COUNT];
+    }
+  }
 }

@@ -9,12 +9,12 @@ mod walk;
 
 use crate::particle::*;
 use crate::configuration::*;
-use crate::variance::*;
 use crate::walk::*;
 
 use std::env;
 use std::io::{stdout, Stdout, Write};
 use std::iter::zip;
+use std::thread::available_parallelism;
 use std::time::Instant;
 use crossterm::{self, QueueableCommand, terminal::ClearType};
 use rand::{self, RngExt, rngs::SmallRng};
@@ -48,6 +48,7 @@ struct ExecutionParameters {
   measurements : Vec<Measurement>,
   measurement_fade : f64,
   verbosity : Verbosity,
+  thread_count : usize,
 }
 
 impl Default for ExecutionParameters {
@@ -58,11 +59,12 @@ impl Default for ExecutionParameters {
       molecule_name : String::from(""),
       required_error : 0.001,
       time_step : 0.05,
-      walker_count : 1000,
+      walker_count : 10000,
       prep_steps : 1000,
       measurements : vec![],
       measurement_fade : 0.0,
       verbosity : Verbosity::Normal,
+      thread_count : available_parallelism().map_or(1, |c| c.get()),
     }
   }
 }
@@ -95,6 +97,7 @@ fn main() {
     required_error : params.required_error,
     measurements_required : params.measurements,
     measurement_fade : params.measurement_fade,
+    thread_count : params.thread_count,
   };
   let configurations = (0..params.walker_count).map(|_| make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
   let mut population_state = initial_pop_state(&configurations, &ctx);
@@ -144,6 +147,7 @@ fn parse_arguments() -> ExecutionParameters {
       "-p" => params.prep_steps       = args.next().expect("missing argument after -p").parse().expect("couldn't understand -p argument"),
       "-f" => params.measurement_fade = args.next().expect("missing argument after -f").parse().expect("couldn't understand -f argument"),
       "-m" => params.measurements     = args.next().expect("missing argument after -m").chars().map(Measurement::from_char).collect(),
+      "-þ" => params.thread_count     = args.next().expect("missing argument after -þ").parse().expect("couldn't understand -þ argument"),
       "--verbose" => params.verbosity = Verbosity::Verbose,
       "--quiet" => params.verbosity = Verbosity::Quiet,
       "--benchmark" => {
@@ -247,16 +251,6 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
   molecule
 }
 
-fn reset_iteration(population_state : &mut PopulationState) {
-  population_state.variance = Variance::empty();
-  for measurement in &mut population_state.measurement_variances {
-    *measurement = Variance::empty();
-  }
-  for walker in &mut population_state.walker_set {
-    walker.measurement_values = [0.0; MEASUREMENT_COUNT];
-  }
-}
-
 fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &mut R, verbosity : Verbosity, out : &mut Stdout, n_temp_lines : &mut u16) {
   if verbosity <= Verbosity::Quiet {
     return;
@@ -270,8 +264,7 @@ fn display_popstate<R : RngExt>(pop : &PopulationState, ctx : &Context, rng : &m
     out.write_all(format!("{}: {:.5e} ± {:.2e}\n", m, v.mean, v.std_dev).as_bytes()).unwrap();
     *n_temp_lines += 1;
   }
-  let config_index = rng.random_range(0..pop.walker_set.len());
-  let random_configuration = &pop.positions[(config_index * ctx.molecule.len())..((config_index+1) * ctx.molecule.len())];
+  let random_configuration = pop.random_configuration(ctx, rng);
   out.write_all(format!("pop: {}, pop(w): {:.1}, energy: {:.5e} ± {:.2e}\n", pop.population(), pop.total_amplitude(), pop.energy(ctx), pop.energy_std_dev(ctx)).as_bytes()).unwrap();
     *n_temp_lines += 1;
   if verbosity >= Verbosity::Verbose {
