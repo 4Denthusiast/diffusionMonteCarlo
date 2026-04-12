@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Particle {
   Electron,
   Nucleus {z:f64, a:f64, m:f64},

@@ -5,10 +5,12 @@ mod particle;
 mod bessel_k;
 mod configuration;
 mod variance;
+mod thread_pool;
 mod walk;
 
 use crate::particle::*;
 use crate::configuration::*;
+use crate::thread_pool::*;
 use crate::walk::*;
 
 use std::env;
@@ -91,23 +93,22 @@ fn main() {
   let molecule : Vec<Particle> = make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(p,_)| p).collect();
   let ctx = Context {
     dimension : params.dimension,
-    molecule : &molecule[..],
+    molecule : molecule,
     delta_time : params.time_step,
     set_point : params.walker_count as f64,
     required_error : params.required_error,
     measurements_required : params.measurements,
     measurement_fade : params.measurement_fade,
-    thread_count : params.thread_count,
   };
   let configurations = (0..params.walker_count).map(|_| make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
-  let mut population_state = initial_pop_state(&configurations, &ctx);
+  let mut population_state = initial_pop_state(&configurations, &ctx, ThreadPool::new(&mut rng, params.thread_count));
   let mut out = stdout();
   if params.verbosity < Verbosity::Verbose {
     out.queue(crossterm::cursor::SavePosition).unwrap();
   }
   let mut n_temp_lines : u16 = 0;
   for i in 0..params.prep_steps {
-    population_state = step(population_state, &ctx, &mut rng);
+    population_state = step(population_state, &ctx);
     display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
     if params.verbosity >= Verbosity::Normal {
       out.write_all(format!("Preparing...{}/{}\n", i, params.prep_steps).as_bytes()).unwrap();
@@ -121,7 +122,7 @@ fn main() {
   }
   reset_iteration(&mut population_state);
   while population_state.energy_std_dev(&ctx) > params.required_error {
-    population_state = step(population_state, &ctx, &mut rng);
+    population_state = step(population_state, &ctx);
     display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
   }
   if params.verbosity == Verbosity::Quiet {

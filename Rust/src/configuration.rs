@@ -27,7 +27,7 @@ impl Default for Position {
   }
 }
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Measurement {
   Distance,
   Dipole,
@@ -76,7 +76,7 @@ impl Measurement {
   pub fn measure(&self, configuration: &[Position], context: &Context) -> f64 {
     match &self {
       Measurement::Distance => configuration[0].dist(&configuration[1]),
-      Measurement::Dipole => zip(configuration, context.molecule).map(|(x,p)| x.x * particle_charge(p)).sum(), // Unlike the Haskell version, this requires the total charge to be 0.
+      Measurement::Dipole => zip(configuration, &context.molecule).map(|(x,p)| x.x * particle_charge(p)).sum(), // Unlike the Haskell version, this requires the total charge to be 0.
       Measurement::Potential => potential_energy(configuration, context),
       Measurement::One => 1.0,
     }

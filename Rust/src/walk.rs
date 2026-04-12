@@ -1,14 +1,13 @@
 use crate::particle::*;
 use crate::configuration::*;
 use crate::variance::*;
+use crate::thread_pool::*;
 
-use rand::{self, RngExt, SeedableRng};
+use rand::{self, RngExt, rngs::SmallRng};
 use rand_distr::{self, Distribution};
 use std::iter;
 use std::iter::zip;
-use std::marker::Send;
-use std::sync::{mpsc, Mutex, Arc};
-use std::thread;
+use std::sync::mpsc;
 
 #[derive(Copy, Clone)]
 pub struct Walker {
@@ -18,15 +17,15 @@ pub struct Walker {
   prev_potential: f64,
 }
 
-pub struct Context<'a> {
+#[derive(Clone)]
+pub struct Context {
   pub dimension: u8,
-  pub molecule: &'a [Particle],
+  pub molecule: Vec<Particle>,
   pub delta_time: f64,
   pub set_point: f64,
   pub required_error: f64,
   pub measurements_required: Vec<Measurement>,
   pub measurement_fade: f64,
-  pub thread_count: usize,
 }
 
 #[derive(Clone)]
@@ -42,6 +41,7 @@ pub struct PopulationState {
   pub energy: f64, // includes an adjustment term to shift the population back towards the set point
   pub variance: Variance,
   pub measurement_variances: Vec<Variance>,
+  pub thread_pool: ThreadPool<SmallRng>,
 }
 
 impl PopulationState {
@@ -68,7 +68,7 @@ impl PopulationState {
   }
 }
 
-pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context) -> PopulationState {
+pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context, thread_pool : ThreadPool<SmallRng>) -> PopulationState {
   let n_measurements = context.measurements_required.len();
   PopulationState {
     chunks: positions.chunks(CHUNK_SIZE).map(|ps| PopChunk {
@@ -85,6 +85,7 @@ pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context) -> 
     energy: 0.0,
     variance: Variance::empty(),
     measurement_variances: vec![Variance::empty(); n_measurements],
+    thread_pool,
   }
 }
 
@@ -98,38 +99,27 @@ pub fn random_position<R : RngExt>(start : Position, stddev : f64, dimension : u
   }
 }
 
-fn step_walkers<R : RngExt + SeedableRng + Send>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState {
-  let work_queue = Arc::new(Mutex::new(pop.chunks));
+fn step_walkers(mut pop : PopulationState, ctx : &Context) -> PopulationState {
   let (in_send, in_rcv) = mpsc::channel();
-  thread::scope(|scope| {
-    for _ in 0..ctx.thread_count {
-      let thread_rcv = work_queue.clone();
-      let thread_send = in_send.clone();
-      let mut thread_rng = rng.fork();
-      scope.spawn(move || {
-        let mut configuration_stack = Vec::new();
-        loop {
-          let mut mutex_guard = thread_rcv.lock().unwrap();
-          let Some(chunk) = mutex_guard.pop() else {
-            return;
-          };
-          drop(mutex_guard);
-          let mut new_chunk = PopChunk {
-            walker_set : vec![],
-            positions : vec![],
-          };
-          for (walker, configuration) in zip(
-            chunk.walker_set.iter(),
-            chunk.positions.as_slice().chunks_exact(ctx.molecule.len())
-          ) {
-            configuration_stack.extend_from_slice(configuration);
-            step_walker(*walker, &mut configuration_stack, &mut new_chunk, pop.energy, ctx, &mut thread_rng, 0);
-          }
-          thread_send.send(new_chunk).unwrap();
-        }
-      });
-    }
-  });
+  for chunk in pop.chunks {
+    let thread_send = in_send.clone();
+    let thread_ctx = ctx.clone();
+    pop.thread_pool.submit(move |mut rng| {
+      let mut configuration_stack = Vec::new();
+      let mut new_chunk = PopChunk {
+        walker_set : vec![],
+        positions : vec![],
+      };
+      for (walker, configuration) in zip(
+        chunk.walker_set.iter(),
+        chunk.positions.as_slice().chunks_exact(thread_ctx.molecule.len())
+      ) {
+        configuration_stack.extend_from_slice(configuration);
+        step_walker(*walker, &mut configuration_stack, &mut new_chunk, pop.energy, &thread_ctx, &mut rng, 0);
+      }
+      thread_send.send(new_chunk).unwrap();
+    });
+  }
   drop(in_send);
   pop.chunks = rebalance_chunks(in_rcv.iter(), ctx);
   pop
@@ -150,7 +140,7 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, out_
   } else {
     // move walker
     let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
-    for (r, p) in zip(&mut *configuration, ctx.molecule) {
+    for (r, p) in zip(&mut *configuration, &ctx.molecule) {
       if particle_mass(p).is_finite() {
         *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
       }
@@ -239,12 +229,12 @@ fn measurement_totals(pop : &PopulationState, ctx : &Context) -> Vec<f64> {
   result
 }
 
-pub fn step<R : RngExt + SeedableRng + Send>(mut pop : PopulationState, ctx : &Context, rng : &mut R) -> PopulationState{
+pub fn step(mut pop : PopulationState, ctx : &Context) -> PopulationState{
   let start_pop = pop.total_amplitude();
   if start_pop == 0.0 {
     panic!("Sample population extinct.");
   }
-  pop = step_walkers(pop, ctx, rng);
+  pop = step_walkers(pop, ctx);
   let end_pop = pop.total_amplitude();
   let growth_estimate = (end_pop / start_pop) * (-pop.energy * ctx.delta_time).exp();
   pop.variance.add_data_point(end_pop / ctx.set_point, growth_estimate);
