@@ -16,23 +16,27 @@ B = -∇^2
 (exp(t(A+B)) - exp(tA/2)exp(tB)exp(tA/2))Ψ
 = t^3/24 [V+2∇^2,[∇^2,V]] Ψ + O(t^4)
 ~= t^3/24 [V+2∇^2, (∇^2V) + 2(∇V)∇] Ψ
-= t^3/24 (2V∇V∇Ψ - 2∇V∇(VΨ) + 2(∇^4V)Ψ + 4 ∇^3V ∇Ψ + 2∇^2(∇V ∇Ψ) - 2 ∇V ∇^3Ψ)
-= t^3/24 (2V∇V∇Ψ - 2∇V∇ΨV - 2(∇V)^2 Ψ + 2 ∇^4V Ψ + 4 ∇^3V ∇Ψ + 2∇^3V ∇Ψ + 4 ∇^2V ∇^2 Ψ)
-= t^3/24 (-2(∇V)^2 Ψ + 2 ∇^4V Ψ + 6 ∇^3V ∇Ψ + 4 ∇^2V ∇^2Ψ)
+= t^3/24 (2V∇V∇Ψ - 2∇V∇(VΨ) + 2(∇^4V)Ψ + 4 ∇^3V ∇Ψ + 4∇^2(∇V ∇Ψ) - 4 ∇V ∇^3Ψ)
+= t^3/24 (2V∇V∇Ψ - 2∇V∇ΨV - 2(∇V)^2 Ψ + 2 ∇^4V Ψ + 4 ∇^3V ∇Ψ + 4∇^3V ∇Ψ + 8 ∇^2V ∇^2 Ψ)
+= t^3/24 (-2(∇V)^2 Ψ + 2 ∇^4V Ψ + 8 ∇^3V ∇Ψ + 8 ∇^2V ∇^2Ψ)
+= t^3/12 (-(∇V)^2 Ψ + ∇^4V Ψ + 4 ∇^3V ∇Ψ + 4 ∇^2V ∇^2Ψ)
 
 If ∇^2V = 0, this reduces to
 -t^3/12 ∇V^2 Ψ
-with a factor of 1/2m when the units are added back in
+with a factor of 1/2m when the units are added back in, so the energy error is t^2/24m ∇V^2
 
-The only case where ∇^2V is not 0 is the slimming force,
+The only case where ∇^2V is not 0 is the S force,
 ∇^2V
-= ∇^2 r^-2 exp(-r)
-= 2 ∇(r^-2) ∇exp(-r) + r^-2 ∇^2exp(-r)
-= 2 r/r^-4 . (-r/|r|) exp(-r) + r^-2 ∇(-(r/|r|) exp(-r))
-= -2 |r|^-3 exp(-r) - r^-2 (-exp(-r) + 3 exp(-r))
-= -r^-2 exp(-r) (2/|r| + 2)
+= ∇^2 r^-1 K_1(r)
+= d^2/dr^2 (r^-1 K_1(r)) + 3/r d/dr (r^-1 K_1(r))
+= r^-3 ((r^2+6)K_1(r) + 3rK_0(r)) - 3/rr (K_0(r) + 2/r K_1(r))
+= r^-1 K_1(r)
+(which is proportional to V, as expected, given that's how the Yukawa potential works)
 
-which gives errors of the order |r|^-5 Ψ + |r|^-4 ∇Ψ + |r|^-3 ∇^2Ψ all of which are smaller (for small r, which is the only case where the slim force is non-negligible) than r^-6, the scale of the ∇V^2 component in the 4D case
+which gives errors t^3/12 (-(∇V)^2 Ψ + V Ψ + 4 ∇V ∇Ψ + 4 V ∇^2Ψ)
+Assuming |∇Ψ| ~= Ψ/r, and given |∇V| ~= 2V/r for small r, the size of this is about
+t^3/12 (4V^2/r^2 + V + 8 V/r + 4V/r^2)
+so the -(∇V)^2 Ψ term still dominates for small r, which is the only situation where the S force is relevant.
 
 For the error to be less than E, it is therefore necessary that t^3/12 << E/|∇V|^2, so roughly, in 2D, t << E^1/3 r^2/3, in 3D, t << E^1/3 r^4/3, and in 4D, t << E^1/3 r^2. Possibly some additional restriction is needed in the 2D and 3D cases for small r, so that it can't jump all the way to the singularity.
 

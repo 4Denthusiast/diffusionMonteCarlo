@@ -64,7 +64,7 @@ measure _ MOne = 1
 -- Decrease the step-size when the potential energy is locally highly variable (i.e. when particles are nearby), and adapt to the desired energy error.
 suitableStepSize :: Double -> Configuration -> Double
 suitableStepSize de c@(Conf ps) = min ordinaryBound radiusBound
-    where ordinaryBound = (de/(sum $ concat $ zipWith (\p t -> map (dv2 p) t) ps (tail $ tails ps)))**(1/3) -- t^3 < E/|V|^2
+    where ordinaryBound = sqrt (de/(sum $ concat $ zipWith (\p t -> map (dv2 p) t) ps (tail $ tails ps))) -- t^2 < E/|V|^2
           dv2 (r0,p0) (r1,p1) = dist2 r0 r1 ^^ (1-confDimension c)
           radiusBound = (0.07*) $ minimum $ concat $ zipWith (\p t -> map (rb p) t) ps (tail $ tails ps) -- the distance that may be travelled is less than the distance between any two particles
           rb (r0,p0) (r1,p1) = dist2 r0 r1

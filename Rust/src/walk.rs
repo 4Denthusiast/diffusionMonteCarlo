@@ -105,17 +105,15 @@ fn step_walkers(mut pop : PopulationState, ctx : &Context) -> PopulationState {
     let thread_send = in_send.clone();
     let thread_ctx = ctx.clone();
     pop.thread_pool.submit(move |mut rng| {
-      let mut configuration_stack = Vec::new();
+      let mut walker_stack = chunk.walker_set;
+      let mut configuration_stack = chunk.positions;
       let mut new_chunk = PopChunk {
         walker_set : vec![],
         positions : vec![],
       };
-      for (walker, configuration) in zip(
-        chunk.walker_set.iter(),
-        chunk.positions.as_slice().chunks_exact(thread_ctx.molecule.len())
-      ) {
-        configuration_stack.extend_from_slice(configuration);
-        step_walker(*walker, &mut configuration_stack, &mut new_chunk, pop.energy, &thread_ctx, &mut rng, 0);
+      while walker_stack.len() > 0 {
+        // This has to use explicit stacks instead of recursion because, while the expected number of sub-steps per step is finite, sometimes the number of sub-steps is still high enough to exceed the call stack limit. Also the configuration has no fixed size so it can't be passed as an argument without a wasteful new heap allocation.
+        step_walker(&mut walker_stack, &mut configuration_stack, &mut new_chunk, pop.energy, &thread_ctx, &mut rng);
       }
       thread_send.send(new_chunk).unwrap();
     });
@@ -125,10 +123,11 @@ fn step_walkers(mut pop : PopulationState, ctx : &Context) -> PopulationState {
   pop
 }
 
-fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, out_chunk : &mut PopChunk, energy : f64, ctx : &Context, rng : &mut R, depth : u32) {
+fn step_walker<R : RngExt>(walker_stack : &mut Vec<Walker>, configuration_stack : &mut Vec<Position>, out_chunk : &mut PopChunk, energy : f64, ctx : &Context, rng : &mut R) {
+  let mut walker = walker_stack.pop().unwrap(); // step_walker should only be called when the stack is non-empty.
   let n_particles = ctx.molecule.len();
-  let config_range = (stack.len()-n_particles)..stack.len();
-  let configuration = &mut stack[config_range.clone()];
+  let config_range = (configuration_stack.len()-n_particles)..configuration_stack.len();
+  let configuration = &mut configuration_stack[config_range.clone()];
   if walker.local_time >= 0.0 {
     walker.local_time -= ctx.delta_time;
     for mv in &mut walker.measurement_values {
@@ -136,7 +135,7 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, out_
     }
     out_chunk.walker_set.push(walker);
     out_chunk.positions.extend_from_slice(&configuration);
-    stack.truncate(stack.len() - n_particles);
+    configuration_stack.truncate(configuration_stack.len() - n_particles);
   } else {
     // move walker
     let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
@@ -159,19 +158,17 @@ fn step_walker<R : RngExt>(mut walker : Walker, stack : &mut Vec<Position>, out_
       if rng.random_bool(walker.amplitude) {
         walker.amplitude = 1.0;
       } else {
-        stack.truncate(stack.len() - n_particles);
+        configuration_stack.truncate(configuration_stack.len() - n_particles);
         return; // delete the walker.
       }
     }
     let split_into = if walker.amplitude > 2.0 {
-      stack.extend_from_within(config_range.clone());
+      configuration_stack.extend_from_within(config_range.clone());
       2
     } else { 1 };
     walker.amplitude /= split_into as f64;
-    
-    // recurse
     for _ in 0..split_into {
-      step_walker(walker, stack, out_chunk, energy, ctx, rng, depth + 1);
+      walker_stack.push(walker);
     }
   }
 }

@@ -103,7 +103,7 @@ pub fn suitable_step_size(configuration: &[Position], context: &Context) -> f64 
       ordinary_bound_inv += r2.powi((1 - (context.dimension as i32)).into());
     }
   }
-  (context.required_error / ordinary_bound_inv).powf(1.0/3.0).min(0.07 * min_radius2)
+  (context.required_error / ordinary_bound_inv).sqrt().min(0.07 * min_radius2)
 }
 
 pub fn show_config(configuration : &[Position]) -> String {
