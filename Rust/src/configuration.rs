@@ -1,5 +1,6 @@
 use std::fmt::{self, Display};
 use std::iter::zip;
+use std::ops::{Add, Sub, Mul};
 
 use crate::particle::*;
 use crate::bessel_k::*;
@@ -9,14 +10,14 @@ use crate::walk::Context;
 pub struct Position {pub x: f64, pub y: f64, pub z: f64, pub w: f64}
 
 impl Position {
-  fn dist2(&self, other: &Position) -> f64 {
+  pub fn dist2(&self, other: &Position) -> f64 {
     (self.x - other.x) * (self.x - other.x) + 
     (self.y - other.y) * (self.y - other.y) + 
     (self.z - other.z) * (self.z - other.z) + 
     (self.w - other.w) * (self.w - other.w)
   }
   
-  fn dist(&self, other: &Position) -> f64 {
+  pub fn dist(&self, other: &Position) -> f64 {
     self.dist2(other).sqrt()
   }
 }
@@ -24,6 +25,30 @@ impl Position {
 impl Default for Position {
   fn default() -> Self {
     Position{x:0.0, y:0.0, z:0.0, w:0.0}
+  }
+}
+
+impl Add for Position {
+  type Output = Position;
+  fn add(self, rhs : Self) -> Self {
+    Position {
+      x : self.x + rhs.x,
+      y : self.y + rhs.y,
+      z : self.z + rhs.z,
+      w : self.w + rhs.w,
+    }
+  }
+}
+
+impl Sub for Position {
+  type Output = Position;
+  fn sub(self, rhs : Self) -> Self {self + (rhs * (-1.0))}
+}
+
+impl Mul<f64> for Position {
+  type Output = Position;
+  fn mul(self, rhs : f64) -> Self {
+    Position {x : self.x * rhs, y : self.y * rhs, z : self.z * rhs, w : self.w * rhs}
   }
 }
 

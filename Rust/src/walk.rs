@@ -1,5 +1,6 @@
 use crate::particle::*;
 use crate::configuration::*;
+use crate::ansatz::*;
 use crate::variance::*;
 use crate::thread_pool::*;
 
@@ -26,6 +27,7 @@ pub struct Context {
   pub required_error: f64,
   pub measurements_required: Vec<Measurement>,
   pub measurement_fade: f64,
+  pub ansatz: Box<dyn Ansatz>,
 }
 
 #[derive(Clone)]
@@ -89,31 +91,33 @@ pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context, thr
   }
 }
 
-pub fn random_position<R : RngExt>(start : Position, stddev : f64, dimension : u8, rng : &mut R) -> Position {
+pub fn random_position<R : RngExt>(stddev : f64, dimension : u8, rng : &mut R) -> Position {
   let dist = rand_distr::Normal::new(0.0, stddev).unwrap();
   Position {
-    x : start.x + dist.sample(rng),
-    y : start.y + dist.sample(rng),
-    z : start.z + if dimension >= 3 {dist.sample(rng)} else {0.0},
-    w : start.w + if dimension >= 4 {dist.sample(rng)} else {0.0},
+    x : dist.sample(rng),
+    y : dist.sample(rng),
+    z : if dimension >= 3 {dist.sample(rng)} else {0.0},
+    w : if dimension >= 4 {dist.sample(rng)} else {0.0},
   }
 }
 
-fn step_walkers(mut pop : PopulationState, ctx : &Context) -> PopulationState {
+pub fn step_walkers<A : Ansatz>(mut pop : PopulationState, ctx : &Context, ansatz : &A) -> PopulationState {
   let (in_send, in_rcv) = mpsc::channel();
   for chunk in pop.chunks {
     let thread_send = in_send.clone();
     let thread_ctx = ctx.clone();
+    let thread_ansatz = dyn_clone::clone(ansatz);
     pop.thread_pool.submit(move |mut rng| {
       let mut walker_stack = chunk.walker_set;
       let mut configuration_stack = chunk.positions;
+      let thread_ansatz_inner = thread_ansatz;
       let mut new_chunk = PopChunk {
         walker_set : vec![],
         positions : vec![],
       };
       while walker_stack.len() > 0 {
         // This has to use explicit stacks instead of recursion because, while the expected number of sub-steps per step is finite, sometimes the number of sub-steps is still high enough to exceed the call stack limit. Also the configuration has no fixed size so it can't be passed as an argument without a wasteful new heap allocation.
-        step_walker(&mut walker_stack, &mut configuration_stack, &mut new_chunk, pop.energy, &thread_ctx, &mut rng);
+        step_walker(&mut walker_stack, &mut configuration_stack, &mut new_chunk, pop.energy, &thread_ctx, &mut rng, &thread_ansatz_inner);
       }
       thread_send.send(new_chunk).unwrap();
     });
@@ -123,7 +127,7 @@ fn step_walkers(mut pop : PopulationState, ctx : &Context) -> PopulationState {
   pop
 }
 
-fn step_walker<R : RngExt>(walker_stack : &mut Vec<Walker>, configuration_stack : &mut Vec<Position>, out_chunk : &mut PopChunk, energy : f64, ctx : &Context, rng : &mut R) {
+fn step_walker<A : Ansatz, R : RngExt>(walker_stack : &mut Vec<Walker>, configuration_stack : &mut Vec<Position>, out_chunk : &mut PopChunk, energy : f64, ctx : &Context, rng : &mut R, ansatz : &A) {
   let mut walker = walker_stack.pop().unwrap(); // step_walker should only be called when the stack is non-empty.
   let n_particles = ctx.molecule.len();
   let config_range = (configuration_stack.len()-n_particles)..configuration_stack.len();
@@ -139,12 +143,16 @@ fn step_walker<R : RngExt>(walker_stack : &mut Vec<Walker>, configuration_stack 
   } else {
     // move walker
     let dt = suitable_step_size(&configuration, ctx).min(-walker.local_time);
-    for (r, p) in zip(&mut *configuration, &ctx.molecule) {
+    // TODO: avoid this allocation.
+    let initial_configuration = configuration.to_vec();
+    for ((r, p), i) in zip(zip(&mut *configuration, &ctx.molecule), 0..) {
       if particle_mass(p).is_finite() {
-        *r = random_position(*r, (dt / particle_mass(p)).sqrt(), ctx.dimension, rng);
+        *r = *r
+          + random_position((dt / particle_mass(p)).sqrt(), ctx.dimension, rng)
+          + ansatz.drift(&initial_configuration, ctx, i) * (dt / particle_mass(p));
       }
     }
-    let v = potential_energy(&configuration, ctx);
+    let v = potential_energy(&configuration, ctx) - ansatz.energy(&configuration, ctx);
     walker.amplitude *= (-dt * ((v + walker.prev_potential)/2.0 - energy)).exp();
     walker.prev_potential = v;
     walker.local_time += dt;
@@ -213,15 +221,20 @@ fn trim_walker_set(pop : &mut PopulationState) {
   pop.chunks.truncate((pop.chunks.len()+1)/2); // +1 so that in the unlikely case that there's only one chunk, it isn't deleted.
 }
 
-fn measurement_totals(pop : &PopulationState, ctx : &Context) -> Vec<f64> {
+fn measurement_averages(pop : &PopulationState, ctx : &Context) -> Vec<f64> {
   let mut result = vec![0.0; ctx.measurements_required.len()];
+  let mut norm = 0.0;
   for chunk in &pop.chunks {
-    for walker in &chunk.walker_set {
-      let norm = walker.measurement_values[0]; // Fixed as Measurement::One
+    for (walker, configuration) in zip(&chunk.walker_set, chunk.positions.chunks_exact(ctx.molecule.len())) {
+      let ansatz_value = ctx.ansatz.value(configuration, ctx);
+      norm += (walker.amplitude / ansatz_value) * walker.measurement_values[0]; // Fixed as Measurement::One
       for i in 0..result.len() {
-        result[i] += walker.amplitude * walker.measurement_values[i+1] / norm;
+        result[i] += (walker.amplitude / ansatz_value) * walker.measurement_values[i+1];
       }
     }
+  }
+  for m in &mut result {
+    *m /= norm;
   }
   result
 }
@@ -231,13 +244,13 @@ pub fn step(mut pop : PopulationState, ctx : &Context) -> PopulationState{
   if start_pop == 0.0 {
     panic!("Sample population extinct.");
   }
-  pop = step_walkers(pop, ctx);
+  pop = ctx.ansatz.step_walkers_dynamic(pop, ctx);
   let end_pop = pop.total_amplitude();
   let growth_estimate = (end_pop / start_pop) * (-pop.energy * ctx.delta_time).exp();
   pop.variance.add_data_point(end_pop / ctx.set_point, growth_estimate);
-  let measurements = measurement_totals(&pop, ctx);
+  let measurements = measurement_averages(&pop, ctx);
   for (v, m) in zip(&mut pop.measurement_variances, measurements) {
-    v.add_data_point(end_pop / ctx.set_point, m / end_pop);
+    v.add_data_point(end_pop / ctx.set_point, m);
   }
   let relaxation_time = ctx.delta_time * pop.variance.time_at_bound(0.5);
   pop.energy = pop.energy(ctx) + (ctx.set_point / end_pop).ln() / relaxation_time;

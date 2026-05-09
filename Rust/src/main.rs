@@ -4,12 +4,14 @@
 mod particle;
 mod bessel_k;
 mod configuration;
+mod ansatz;
 mod variance;
 mod thread_pool;
 mod walk;
 
 use crate::particle::*;
 use crate::configuration::*;
+use crate::ansatz::*;
 use crate::thread_pool::*;
 use crate::walk::*;
 
@@ -38,7 +40,6 @@ enum Verbosity {
   Verbose,
 }
 
-#[derive(PartialEq)]
 struct ExecutionParameters {
   dimension : u8,
   atom_seps : Vec<AtomSep>,
@@ -51,6 +52,7 @@ struct ExecutionParameters {
   measurement_fade : f64,
   verbosity : Verbosity,
   thread_count : usize,
+  ansatz : Box<dyn Ansatz>,
 }
 
 impl Default for ExecutionParameters {
@@ -67,6 +69,7 @@ impl Default for ExecutionParameters {
       measurement_fade : 0.0,
       verbosity : Verbosity::Normal,
       thread_count : available_parallelism().map_or(1, |c| c.get()),
+      ansatz : Box::new(TrivialAnsatz),
     }
   }
 }
@@ -99,6 +102,7 @@ fn main() {
     required_error : params.required_error,
     measurements_required : params.measurements,
     measurement_fade : params.measurement_fade,
+    ansatz : params.ansatz,
   };
   let configurations = (0..params.walker_count).map(|_| make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
   let mut population_state = initial_pop_state(&configurations, &ctx, ThreadPool::new(&mut rng, params.thread_count));
@@ -139,6 +143,7 @@ fn parse_arguments() -> ExecutionParameters {
   let mut params = ExecutionParameters::default();
   let mut args = env::args();
   args.next(); // args[0] is the program name.
+  let mut is_first = true;
   while let Some(arg) = args.next() {
     match &arg[..] {
       "-d" => params.dimension        = args.next().expect("missing argument after -d").parse().expect("couldn't understand -d argument"),
@@ -149,10 +154,11 @@ fn parse_arguments() -> ExecutionParameters {
       "-f" => params.measurement_fade = args.next().expect("missing argument after -f").parse().expect("couldn't understand -f argument"),
       "-m" => params.measurements     = args.next().expect("missing argument after -m").chars().map(Measurement::from_char).collect(),
       "-þ" => params.thread_count     = args.next().expect("missing argument after -þ").parse().expect("couldn't understand -þ argument"),
+      "-a" => params.ansatz = parse_ansatz(&args.next().expect("missing argument after -a")),
       "--verbose" => params.verbosity = Verbosity::Verbose,
       "--quiet" => params.verbosity = Verbosity::Quiet,
       "--benchmark" => {
-        if params != ExecutionParameters::default() {
+        if !is_first {
           println!("Warning: --benchmark option will cause all earlier parameters to be ignored.");
         }
         params = benchmark_parameters();
@@ -165,6 +171,7 @@ fn parse_arguments() -> ExecutionParameters {
         params.molecule_name.push_str(arg)
       },
     };
+    is_first = false;
   }
   if params.atom_seps.len() == 0 {
     params.atom_seps.push(AtomSep::Atom{z:1,zf:0.0,a:1,m:f64::INFINITY,q:0});
@@ -217,6 +224,15 @@ fn parse_atom_sep(s : &str) -> Option<AtomSep> {
   Some(AtomSep::Atom{z,zf,a,m,q})
 }
 
+fn parse_ansatz(string : &str) -> Box<dyn Ansatz> {
+  match string {
+    "1" => Box::new(TrivialAnsatz),
+    "sin" => Box::new(SineTestAnsatz),
+    "cusps3d" => Box::new(Cusps3DSimple),
+    _ => panic!("Unrecognized ansatz name {string}"),
+  }
+}
+
 fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &mut R) -> Vec<(Particle,Position)> {
   let mut molecule = vec![];
   let mut position = Position::default();
@@ -229,11 +245,11 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
       }
       AtomSep::Random(r) => {
         had_sep = true;
-        position = random_position(position, *r, dimension, rng);
+        position = position + random_position(*r, dimension, rng);
       }
       AtomSep::Offset{mean,std_dev} => {
         had_sep = true;
-        position = random_position(position, *std_dev, dimension, rng);
+        position = position + random_position(*std_dev, dimension, rng);
         position.x += mean;
       }
       AtomSep::Atom{z,zf,a,m,q} => {
@@ -242,7 +258,7 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
         }
         molecule.push((Particle::Nucleus{z:*z as f64 + *zf, a:*a as f64, m:*m}, position));
         for _ in 0..(*z as i32 - q) {
-          molecule.push((Particle::Electron, random_position(position, 4.0, dimension, rng)));
+          molecule.push((Particle::Electron, position + random_position(4.0, dimension, rng)));
         }
         had_sep = false;
       }

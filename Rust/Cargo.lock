@@ -118,6 +118,7 @@ name = "diffusion_monte_carlo"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "dyn-clone",
  "rand",
  "rand_distr",
  "regex",
@@ -131,6 +132,12 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "equivalent"
