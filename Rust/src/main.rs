@@ -19,7 +19,7 @@ use std::env;
 use std::io::{stdout, Stdout, Write};
 use std::iter::zip;
 use std::thread::available_parallelism;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use crossterm::{self, QueueableCommand, terminal::ClearType};
 use rand::{self, RngExt, rngs::SmallRng};
 use regex::Regex;
@@ -42,8 +42,8 @@ enum Verbosity {
 
 struct ExecutionParameters {
   dimension : u8,
-  atom_seps : Vec<AtomSep>,
-  molecule_name : String,
+  atom_seps : Vec<Vec<AtomSep>>,
+  molecule_names : Vec<String>,
   required_error : f64,
   time_step : f64,
   walker_count : usize,
@@ -53,14 +53,15 @@ struct ExecutionParameters {
   verbosity : Verbosity,
   thread_count : usize,
   ansatz : Box<dyn Ansatz>,
+  timeout : Option<Duration>,
 }
 
 impl Default for ExecutionParameters {
   fn default() -> ExecutionParameters {
     ExecutionParameters {
       dimension : 3,
-      atom_seps : vec![],
-      molecule_name : String::from(""),
+      atom_seps : vec![vec![]],
+      molecule_names : vec![String::from("")],
       required_error : 0.001,
       time_step : 0.05,
       walker_count : 10000,
@@ -70,17 +71,18 @@ impl Default for ExecutionParameters {
       verbosity : Verbosity::Normal,
       thread_count : available_parallelism().map_or(1, |c| c.get()),
       ansatz : Box::new(TrivialAnsatz),
+      timeout : Option::None,
     }
   }
 }
 
 fn benchmark_parameters() -> ExecutionParameters {
   ExecutionParameters {
-    atom_seps : vec![
+    atom_seps : vec![vec![
       AtomSep::Atom{z:1, zf:0.0, a:1, m:f64::INFINITY, q:0},
       AtomSep::Fixed(1.4),
       AtomSep::Atom{z:1, zf:0.0, a:1, m:1800.0, q:0},
-    ],
+    ]],
     time_step : 1.0,
     prep_steps : 1000,
     measurements : vec![Measurement::Distance, Measurement::Potential],
@@ -92,50 +94,52 @@ fn benchmark_parameters() -> ExecutionParameters {
 fn main() {
   let mut rng : SmallRng = rand::make_rng();
   let params = parse_arguments();
-  let start_time = Instant::now();
-  let molecule : Vec<Particle> = make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(p,_)| p).collect();
-  let ctx = Context {
-    dimension : params.dimension,
-    molecule : molecule,
-    delta_time : params.time_step,
-    set_point : params.walker_count as f64,
-    required_error : params.required_error,
-    measurements_required : params.measurements,
-    measurement_fade : params.measurement_fade,
-    ansatz : params.ansatz,
-  };
-  let configurations = (0..params.walker_count).map(|_| make_molecule(&params.atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
-  let mut population_state = initial_pop_state(&configurations, &ctx, ThreadPool::new(&mut rng, params.thread_count));
-  let mut out = stdout();
-  if params.verbosity < Verbosity::Verbose {
-    out.queue(crossterm::cursor::SavePosition).unwrap();
-  }
-  let mut n_temp_lines : u16 = 0;
-  for i in 0..params.prep_steps {
-    population_state = step(population_state, &ctx);
-    display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
-    if params.verbosity >= Verbosity::Normal {
-      out.write_all(format!("Preparing...{}/{}\n", i, params.prep_steps).as_bytes()).unwrap();
-      n_temp_lines += 1;
+  for (atom_seps, molecule_name) in zip(params.atom_seps, params.molecule_names) {
+    let start_time = Instant::now();
+    let molecule : Vec<Particle> = make_molecule(&atom_seps, params.dimension, &mut rng).into_iter().map(|(p,_)| p).collect();
+    let ctx = Context {
+      dimension : params.dimension,
+      molecule : molecule,
+      delta_time : params.time_step,
+      set_point : params.walker_count as f64,
+      required_error : params.required_error,
+      measurements_required : params.measurements.clone(),
+      measurement_fade : params.measurement_fade,
+      ansatz : params.ansatz.clone(),
+    };
+    let configurations = (0..params.walker_count).map(|_| make_molecule(&atom_seps, params.dimension, &mut rng).into_iter().map(|(_,r)| r).collect()).collect();
+    let mut population_state = initial_pop_state(&configurations, &ctx, ThreadPool::new(&mut rng, params.thread_count));
+    let mut out = stdout();
+    if params.verbosity == Verbosity::Normal {
+      out.queue(crossterm::cursor::SavePosition).unwrap();
     }
-  }
-  if params.verbosity == Verbosity::Benchmark {
-    // This result is somewhat random, which isn't great for a benchmark. However, removing the randomness would give a false sense of security because it's possible for changes being benchmarked to alter how the fixed sequence of samples is used, thereby switching to, essentially, a new random sample. At least this way, you can run it a few times and get an idea what the variance is.
-    println!("time: {:?}", start_time.elapsed());
-    return;
-  }
-  reset_iteration(&mut population_state);
-  while population_state.energy_std_dev(&ctx) > params.required_error {
-    population_state = step(population_state, &ctx);
-    display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
-  }
-  if params.verbosity == Verbosity::Quiet {
-    out.write_all(params.molecule_name.as_bytes()).unwrap();
-    out.write_all(": ".as_bytes()).unwrap();
-    for v in &population_state.measurement_variances {
-      out.write_all(format!("{:.5e} ± {:.2e}, ", v.mean, v.std_dev).as_bytes()).unwrap();
+    let mut n_temp_lines : u16 = 0;
+    for i in 0..params.prep_steps {
+      population_state = step(population_state, &ctx);
+      display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
+      if params.verbosity >= Verbosity::Normal {
+        out.write_all(format!("Preparing...{}/{}\n", i, params.prep_steps).as_bytes()).unwrap();
+        n_temp_lines += 1;
+      }
     }
-    out.write_all(format!("{:.5e} ± {:.2e}\n", population_state.energy(&ctx), population_state.energy_std_dev(&ctx)).as_bytes()).unwrap();
+    if params.verbosity == Verbosity::Benchmark {
+      // This result is somewhat random, which isn't great for a benchmark. However, removing the randomness would give a false sense of security because it's possible for changes being benchmarked to alter how the fixed sequence of samples is used, thereby switching to, essentially, a new random sample. At least this way, you can run it a few times and get an idea what the variance is.
+      println!("time: {:?}", start_time.elapsed());
+      return;
+    }
+    reset_iteration(&mut population_state);
+    while population_state.energy_std_dev(&ctx) > params.required_error && params.timeout.is_none_or(|t| start_time.elapsed() < t) {
+      population_state = step(population_state, &ctx);
+      display_popstate(&population_state, &ctx, &mut rng, params.verbosity, &mut out, &mut n_temp_lines);
+    }
+    if params.verbosity == Verbosity::Quiet {
+      out.write_all(molecule_name.as_bytes()).unwrap();
+      out.write_all(": ".as_bytes()).unwrap();
+      for v in &population_state.measurement_variances {
+        out.write_all(format!("{:.5e} ± {:.2e}, ", v.mean, v.std_dev).as_bytes()).unwrap();
+      }
+      out.write_all(format!("{:.5e} ± {:.2e}\n", population_state.energy(&ctx), population_state.energy_std_dev(&ctx)).as_bytes()).unwrap();
+    }
   }
 }
 
@@ -163,19 +167,28 @@ fn parse_arguments() -> ExecutionParameters {
         }
         params = benchmark_parameters();
       },
-      arg => {
-        params.atom_seps.push(parse_atom_sep(arg).expect(&format!("couldn't understand argument \"{}\"", &arg[..])));
-        if params.molecule_name.len() > 0 {
-          params.molecule_name.push(' ');
+      "--timeout" => params.timeout = Option::Some(parse_timeout(&args.next().expect("missing argument after --timeout"))),
+      "," => {
+        if params.atom_seps.last().unwrap().len() == 0 {
+          panic!("Unexpected comma, a molecule specification is required first.");
         }
-        params.molecule_name.push_str(arg)
+        params.atom_seps.push(vec![]);
+        params.molecule_names.push(String::from(""));
+      },
+      arg => {
+        params.atom_seps.last_mut().unwrap().push(parse_atom_sep(arg).expect(&format!("couldn't understand argument \"{}\"", &arg[..])));
+        let molecule_name = params.molecule_names.last_mut().unwrap();
+        if molecule_name.len() > 0 {
+          molecule_name.push(' ');
+        }
+        molecule_name.push_str(arg)
       },
     };
     is_first = false;
   }
-  if params.atom_seps.len() == 0 {
-    params.atom_seps.push(AtomSep::Atom{z:1,zf:0.0,a:1,m:f64::INFINITY,q:0});
-    params.molecule_name = String::from("H");
+  if params.atom_seps.len() == 1 && params.atom_seps[0].len() == 0 {
+    params.atom_seps[0].push(AtomSep::Atom{z:1,zf:0.0,a:1,m:f64::INFINITY,q:0});
+    params.molecule_names[0] = String::from("H");
   }
   params
 }
@@ -230,6 +243,18 @@ fn parse_ansatz(string : &str) -> Box<dyn Ansatz> {
     "sin" => Box::new(SineTestAnsatz),
     "cusps3d" => Box::new(Cusps3DSimple),
     _ => panic!("Unrecognized ansatz name {string}"),
+  }
+}
+
+fn parse_timeout(string : &str) -> Duration {
+  let last = string.chars().next_back().expect("Empty timeout argument"); // It is probably impossible for a command-like argument to be empty anyway.
+  let without_last = &string[0..string.len()-1];
+  match last {
+    's' => Duration::from_secs(without_last.parse().unwrap()),
+    'm' => Duration::from_mins(without_last.parse().unwrap()),
+    'h' => Duration::from_hours(without_last.parse().unwrap()),
+    'd' => Duration::from_hours(without_last.parse().unwrap()) * 24,
+    _ => Duration::from_secs(string.parse().unwrap()),
   }
 }
 
