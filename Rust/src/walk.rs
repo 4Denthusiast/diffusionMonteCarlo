@@ -91,8 +91,7 @@ pub fn initial_pop_state(positions: &Vec<Vec<Position>>, context : &Context, thr
   }
 }
 
-pub fn random_position<R : RngExt>(stddev : f64, dimension : u8, rng : &mut R) -> Position {
-  let dist = rand_distr::Normal::new(0.0, stddev).unwrap();
+pub fn random_position<R : RngExt, D : Distribution<f64>>(dist : D, dimension : u8, rng : &mut R) -> Position {
   Position {
     x : dist.sample(rng),
     y : dist.sample(rng),
@@ -148,7 +147,7 @@ fn step_walker<A : Ansatz, R : RngExt>(walker_stack : &mut Vec<Walker>, configur
     for ((r, p), i) in zip(zip(&mut *configuration, &ctx.molecule), 0..) {
       if particle_mass(p).is_finite() {
         *r = *r
-          + random_position((dt / particle_mass(p)).sqrt(), ctx.dimension, rng)
+          + random_position(rand_distr::Normal::new(0.0, (dt / particle_mass(p)).sqrt()).unwrap(), ctx.dimension, rng)
           + ansatz.drift(&initial_configuration, ctx, i) * (dt / particle_mass(p));
       }
     }

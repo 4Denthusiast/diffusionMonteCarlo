@@ -29,7 +29,7 @@ enum AtomSep {
   Atom {z : u32, zf : f64, a : u32, m : f64, q : i32},
   Fixed (f64),
   Random (f64),
-  Offset {mean : f64, std_dev : f64},
+  Offset {mean : f64, scale : f64},
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -202,7 +202,7 @@ fn parse_atom_sep(s : &str) -> Option<AtomSep> {
       if s2.len() == 0 {
         return Some(AtomSep::Random(x1));
       } else if let Ok(x2) = s2.parse::<f64>() {
-        return Some(AtomSep::Offset{mean : x1, std_dev : x2});
+        return Some(AtomSep::Offset{mean : x1, scale : x2});
       } else {
         return None;
       }
@@ -258,6 +258,10 @@ fn parse_timeout(string : &str) -> Duration {
   }
 }
 
+fn cauchy(scale : f64) -> rand_distr::Cauchy<f64> {
+  rand_distr::Cauchy::new(0.0, scale).unwrap()
+}
+
 fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &mut R) -> Vec<(Particle,Position)> {
   let mut molecule = vec![];
   let mut position = Position::default();
@@ -268,13 +272,13 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
         had_sep = true;
         position.x += *x;
       }
-      AtomSep::Random(r) => {
+      AtomSep::Random(scale) => {
         had_sep = true;
-        position = position + random_position(*r, dimension, rng);
+        position = position + random_position(cauchy(*scale), dimension, rng);
       }
-      AtomSep::Offset{mean,std_dev} => {
+      AtomSep::Offset{mean,scale} => {
         had_sep = true;
-        position = position + random_position(*std_dev, dimension, rng);
+        position = position + random_position(cauchy(*scale), dimension, rng);
         position.x += mean;
       }
       AtomSep::Atom{z,zf,a,m,q} => {
@@ -283,7 +287,7 @@ fn make_molecule<R : RngExt>(atom_seps : &Vec<AtomSep>, dimension : u8, rng : &m
         }
         molecule.push((Particle::Nucleus{z:*z as f64 + *zf, a:*a as f64, m:*m}, position));
         for _ in 0..(*z as i32 - q) {
-          molecule.push((Particle::Electron, position + random_position(4.0, dimension, rng)));
+          molecule.push((Particle::Electron, position + random_position(cauchy(2.0), dimension, rng)));
         }
         had_sep = false;
       }
